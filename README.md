@@ -1,6 +1,6 @@
 # Autopilot
 
-English | [中文说明](./README.zh-CN.md)
+English | [中文说明](./GUIDE.zh-CN.md)
 
 Autopilot is an OpenCode-oriented **attached-session workflow harness**. It provides a workflow runtime skeleton covering refinement, planning, development, review, and testing, plus a locally loadable plugin, CLI entrypoints, and diagnostics.
 
