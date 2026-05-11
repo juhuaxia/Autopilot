@@ -10,7 +10,7 @@ Add the plugin to your OpenCode config:
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 

@@ -10,7 +10,7 @@ Autopilot 是一个 OpenCode 插件，可以把自然语言需求推进成一套
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
