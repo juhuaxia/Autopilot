@@ -25,6 +25,9 @@ export class DefaultWorkflowWorkspace implements WorkflowWorkspace {
     if (!normalized) {
       throw new Error("workflowId must be a non-empty string")
     }
+    if (normalized.includes("..") || normalized.includes("/") || normalized.includes("\\")) {
+      throw new Error("workflowId must not contain path separators or traversal sequences")
+    }
     return normalized
   }
 

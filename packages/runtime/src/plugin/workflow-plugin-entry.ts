@@ -14,6 +14,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { z } from "zod"
+import { readJsonFile } from "../shared/json-file"
+import { DefaultWorkflowWorkspace } from "../workspace/workflow-workspace"
 
 export interface WorkflowPluginInputLike {
   directory: string
@@ -157,13 +159,10 @@ async function syncHostTodos(args: {
     return
   }
 
-  const stateFile = join(args.baseDir, "workflows", args.workflowId, "workflow-state.json")
-  let workflow: { phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string } | null = null
-  try {
-    workflow = JSON.parse(await readFile(stateFile, "utf8")) as { phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string }
-  } catch {
-    return
-  }
+  const workspace = new DefaultWorkflowWorkspace(args.baseDir)
+  const workflow = await readJsonFile<{ phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string }>(
+    workspace.workflowStateFile(args.workflowId),
+  )
 
   if (!workflow?.activeSessionId || !workflow.phase || !workflow.status) {
     return
