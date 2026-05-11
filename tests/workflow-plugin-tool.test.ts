@@ -68,6 +68,12 @@ describe("workflow plugin tool export", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  it("rejects workflow commands with an empty workflowId", async () => {
+    const plugin = await workflowPlugin({ directory: "/tmp/workflow-plugin-empty-id" })
+
+    await expect(plugin.tool.workflow_open.execute({ workflowId: "", payload: "新增空 workflowId 验证。" })).rejects.toThrow("workflowId is required")
+  })
+
   it("re-attaches to a workflow after fresh plugin load (session recovery)", async () => {
     const dir = "/tmp/workflow-plugin-reattach"
 

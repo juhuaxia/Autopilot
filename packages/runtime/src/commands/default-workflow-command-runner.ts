@@ -7,6 +7,12 @@ import { join } from "node:path"
 import type { WorkflowEventRecord } from "../events/workflow-event-store"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
+function assertWorkflowId(workflowId: string): void {
+  if (!workflowId.trim()) {
+    throw new Error("workflowId is required for workflow commands")
+  }
+}
+
 function extractSection(content: string, heading: string): string {
   const start = content.indexOf(heading)
   if (start === -1) {
@@ -243,6 +249,7 @@ ${rawPayload}`
 export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
   async run(args: Parameters<WorkflowCommandRunner["run"]>[0]): Promise<WorkflowCommandResult> {
     const { harness, command, workflowId, payload, foregroundSessionId } = args
+    assertWorkflowId(workflowId)
 
     if (command === "workflow-open") {
       const openRequest = await buildWorkflowOpenRequest(payload, process.cwd())
