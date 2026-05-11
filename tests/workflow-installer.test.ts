@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { runWorkflowInstall } from "../packages/runtime/src/install/workflow-installer"
 
 describe("workflow installer", () => {
-  it("creates project workflow.json and opencode config when absent", async () => {
+  it("creates project autopilot.json and opencode config when absent", async () => {
     const root = await mkdtemp(join(tmpdir(), "workflow-install-"))
     const home = join(root, "home")
     const repo = join(root, "repo")
@@ -14,7 +14,7 @@ describe("workflow installer", () => {
     const result = await runWorkflowInstall({ cwd: repo, homeDir: home })
 
     expect(result.ok).toBe(true)
-    const workflowJson = JSON.parse(await readFile(join(repo, ".workflow-harness", "workflow.json"), "utf8")) as Record<string, unknown>
+    const workflowJson = JSON.parse(await readFile(join(repo, ".workflow-harness", "autopilot.json"), "utf8")) as Record<string, unknown>
     const opencodeJson = JSON.parse(await readFile(join(home, ".config", "opencode", "opencode.json"), "utf8")) as { plugin?: string[] }
     expect(workflowJson).toHaveProperty("skillRoots")
     expect(opencodeJson.plugin).toContain(`file://${join(repo, "dist", "plugin.js")}`)

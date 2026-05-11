@@ -13,7 +13,7 @@ describe("workflow doctor", () => {
     const result = await runWorkflowDoctor(harness.workspace)
 
     expect(result.ok).toBe(true)
-    expect(result.projectConfigFile).toContain("workflow.json")
+    expect(result.projectConfigFile).toContain("autopilot.json")
     expect(Array.isArray(result.checks)).toBe(true)
     expect(Array.isArray(result.nextSteps)).toBe(true)
     expect(Array.isArray(result.warnings)).toBe(true)
@@ -27,7 +27,7 @@ describe("workflow doctor", () => {
     await mkdir(skillRoot, { recursive: true })
     await writeFile(join(skillRoot, "frontend-design.md"), "# frontend-design\n")
     await writeFile(
-      join(baseDir, "workflow.json"),
+      join(baseDir, "autopilot.json"),
       JSON.stringify({
         skillRoots: [skillRoot],
         phases: {

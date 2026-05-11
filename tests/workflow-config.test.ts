@@ -3,10 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { buildSkillRegistry, buildSkillRegistryWithWarnings, resolveSkillPaths } from "../packages/runtime/src/config/skill-registry"
-import { resolveWorkflowConfig } from "../packages/runtime/src/config/workflow-config"
+import { AUTOPILOT_CONFIG_FILENAME, resolveWorkflowConfig } from "../packages/runtime/src/config/workflow-config"
 
 describe("workflow config and skill registry", () => {
-  it("merges global and project workflow.json with project override", async () => {
+  it("merges global and project autopilot.json with project override", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "workflow-config-"))
     const homeDir = join(tempRoot, "home")
     const projectDir = join(tempRoot, "project")
@@ -16,7 +16,7 @@ describe("workflow config and skill registry", () => {
     await mkdir(projectHarnessDir, { recursive: true })
 
     await writeFile(
-      join(homeDir, ".config", "opencode", "workflow.json"),
+      join(homeDir, ".config", "opencode", AUTOPILOT_CONFIG_FILENAME),
       JSON.stringify({
         skillRoots: ["~/.claude/skills"],
         phases: {
@@ -26,7 +26,7 @@ describe("workflow config and skill registry", () => {
     )
 
     await writeFile(
-      join(projectHarnessDir, "workflow.json"),
+      join(projectHarnessDir, AUTOPILOT_CONFIG_FILENAME),
       JSON.stringify({
         skillRoots: ["./project-skills"],
         phases: {
@@ -36,7 +36,7 @@ describe("workflow config and skill registry", () => {
     )
 
     const resolved = await resolveWorkflowConfig({
-      projectConfigFile: join(projectHarnessDir, "workflow.json"),
+      projectConfigFile: join(projectHarnessDir, AUTOPILOT_CONFIG_FILENAME),
       homeDir,
     })
 

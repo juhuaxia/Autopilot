@@ -5,8 +5,8 @@ describe("workflow diagnostics formatters", () => {
   it("formats doctor result into human-readable text", () => {
     const output = formatWorkflowDoctorResult({
       ok: false,
-      globalConfigFile: "/home/user/.config/opencode/workflow.json",
-      projectConfigFile: "/repo/.workflow-harness/workflow.json",
+      globalConfigFile: "/home/user/.config/opencode/autopilot.json",
+      projectConfigFile: "/repo/.workflow-harness/autopilot.json",
       skillRoots: ["~/.claude/skills"],
       requiredSkills: [{ phase: "develop", skills: ["frontend-design"] }],
       missingSkills: [{ phase: "develop", skill: "frontend-design" }],
@@ -24,14 +24,14 @@ describe("workflow diagnostics formatters", () => {
   it("formats install result into human-readable text", () => {
     const output = formatWorkflowInstallResult({
       ok: true,
-      projectWorkflowConfigFile: "/repo/.workflow-harness/workflow.json",
+      projectWorkflowConfigFile: "/repo/.workflow-harness/autopilot.json",
       opencodeConfigFile: "/home/user/.config/opencode/opencode.json",
       pluginEntry: "file:///repo/plugin.ts",
       warnings: [],
     })
 
     expect(output).toContain("Workflow Install: OK")
-    expect(output).toContain("Project workflow.json")
+    expect(output).toContain("Project autopilot.json")
     expect(output).toContain("Recommended next steps:")
   })
 })

@@ -258,7 +258,7 @@ describe("workflow harness MVP", () => {
     await Bun.write(join(skillRoot, "frontend-design.md"), "# frontend-design\nUse existing components first.\n")
     await Bun.write(join(skillRoot, "playwright.md"), "# playwright\nPrefer browser verification for critical flows.\n")
 
-    await writeJsonFile(join(baseDir, "workflow.json"), {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
       skillRoots: [skillRoot],
       phases: {
         develop: { requiredSkills: ["frontend-design"] },
@@ -312,7 +312,7 @@ describe("workflow harness MVP", () => {
     await Bun.write(join(skillRoot, "risk-planning.md"), "# risk-planning\nBreak work down by acceptance and risk.\n")
     await Bun.write(join(skillRoot, "ui-review.md"), "# ui-review\nFocus on visual consistency and regression risk.\n")
 
-    await writeJsonFile(join(baseDir, "workflow.json"), {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
       skillRoots: [skillRoot],
       phases: {
         plan: { requiredSkills: ["risk-planning"] },
@@ -362,7 +362,7 @@ describe("workflow harness MVP", () => {
     const skillRoot = await mkdtemp(join(tmpdir(), "workflow-phase-skills-refinement-"))
     await Bun.write(join(skillRoot, "clarity-guide.md"), "# clarity-guide\nResolve ambiguity before plan.\n")
 
-    await writeJsonFile(join(baseDir, "workflow.json"), {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
       skillRoots: [skillRoot],
       phases: {
         spec_refinement: { requiredSkills: ["clarity-guide"] },
@@ -394,7 +394,7 @@ describe("workflow harness MVP", () => {
   })
 
   it("renders missing skill names and config warnings without breaking dispatch", async () => {
-    await writeJsonFile(join(baseDir, "workflow.json"), {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
       skillRoots: [join(baseDir, "missing-skills-root")],
       phases: {
         develop: { requiredSkills: ["missing-skill"] },
