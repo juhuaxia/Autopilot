@@ -64,7 +64,7 @@ OpenCode 原生支持 npm 插件。等这个包发布后，最简单的配置方
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.0"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.2"]
 }
 ```
 
@@ -81,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh 
 安装指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.2
 ```
 
 这个备用安装脚本会：

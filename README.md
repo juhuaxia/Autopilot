@@ -62,7 +62,7 @@ You can also pin a version:
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.0"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.2"]
 }
 ```
 
@@ -79,7 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh 
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.2
 ```
 
 The fallback installer will:
