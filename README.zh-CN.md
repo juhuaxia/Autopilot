@@ -56,7 +56,7 @@ OpenCode 原生支持 npm 插件。等这个包发布后，最简单的配置方
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
@@ -64,7 +64,7 @@ OpenCode 原生支持 npm 插件。等这个包发布后，最简单的配置方
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot@0.1.0"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.0"]
 }
 ```
 
@@ -224,7 +224,7 @@ bun run src/cli.ts workflow-attach wf-1
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
@@ -411,7 +411,7 @@ opencode serve
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 

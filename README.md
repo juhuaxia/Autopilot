@@ -54,7 +54,7 @@ OpenCode supports npm-based plugins directly. Once this package is published, th
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
@@ -62,7 +62,7 @@ You can also pin a version:
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot@0.1.0"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.0"]
 }
 ```
 
@@ -222,7 +222,7 @@ Recommended OpenCode config:
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
@@ -409,7 +409,7 @@ If you are using the npm plugin mode, you can simply configure:
 
 ```json
 {
-  "plugin": ["@juhuaxia/opencode-autopilot"]
+  "plugin": ["@fkqfkq123/opencode-autopilot"]
 }
 ```
 
