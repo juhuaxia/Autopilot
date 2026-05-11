@@ -223,6 +223,12 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           })
           const waitRuntimePatch = {
             waitingHumanActionId: record.id,
+            phaseDispatchAttempts: {
+              ...(runtime.phaseDispatchAttempts ?? {}),
+              ...(workflow.phase === "spec_refinement" || workflow.phase === "plan" || workflow.phase === "develop" || workflow.phase === "review" || workflow.phase === "test"
+                ? { [workflow.phase]: 0 }
+                : {}),
+            },
             ...(workflow.phase === "spec_refinement" && (runtime.refinementAttempts ?? 0) > 0
               ? { refinementEscalationReason: "Autonomous refinement retry budget exhausted" }
               : {}),
@@ -260,6 +266,8 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           await this.deps.humanActionStore.markConsumed(currentHumanAction.id)
           await this.deps.stateStore.updateRuntime(workflowId, {
             waitingHumanActionId: null,
+            consecutiveFailures: 0,
+            phaseDispatchAttempts: {},
             ...(workflow.phase === "spec_refinement"
               ? {
                   refinementAttempts: 0,
@@ -319,6 +327,13 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           : 0
         const runtimePatch = {
           lastContinuationAt: new Date().toISOString(),
+          consecutiveFailures: 0,
+          phaseDispatchAttempts: {
+            ...(runtime.phaseDispatchAttempts ?? {}),
+            ...(action.phase === "spec_refinement" || action.phase === "plan" || action.phase === "develop" || action.phase === "review" || action.phase === "test"
+              ? { [action.phase]: (runtime.phaseDispatchAttempts?.[action.phase] ?? 0) + 1 }
+              : {}),
+          },
           ...(action.phase === "spec_refinement"
             ? {
                 refinementAttempts: nextAttempt,

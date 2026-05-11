@@ -38,6 +38,7 @@ export async function initializeWorkflow(args: {
     refinementAttempts: 0,
     refinementLastDispatchSummary: null,
     refinementEscalationReason: null,
+    phaseDispatchAttempts: {},
   }
 
   await stateStore.saveWorkflow(workflow)

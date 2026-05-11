@@ -627,6 +627,71 @@ describe("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("stops redispatching ambiguous review after retry budget and waits for human", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-unknown-budget"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review 未知结论重试预算验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review 结论长期模糊时不能无限循环。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "目标页面。",
+        "",
+        "## 发现的问题",
+        "无。",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0 | major: 0 | minor: 0 | suggestion: 0",
+        "",
+        "## Regression 风险评估",
+        "低。",
+        "",
+        "## 结论",
+        "待补充",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await harness.tickScheduler.requestTick(workflowId, "review unresolved 1")
+    await harness.tickScheduler.requestTick(workflowId, "review unresolved 2")
+    await harness.tickScheduler.requestTick(workflowId, "review unresolved 3")
+    await harness.tickScheduler.requestTick(workflowId, "review unresolved 4")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+    expect(workflow?.phase).toBe("review")
+    expect(workflow?.status).toBe("waiting_human")
+    expect(humanAction?.action.type).toBe("blocked")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("does not continue test when status is COMPLETED but conclusion is fail", async () => {
     const harness = await createHarness(baseDir)
     const workflowId = "wf-test-completed-fail"
@@ -956,6 +1021,82 @@ describe("workflow harness MVP", () => {
     expect(evaluation.missing).not.toContain("## Figma 高保真验证（如适用）")
     expect(evaluation.missing).not.toContain("## Key Visual Elements 验证（如适用）")
     expect(evaluation.missing).not.toContain("## 历史遗留观察项（非阻塞，可选）")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stops redispatching ambiguous test after retry budget and waits for human", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-unknown-budget"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 test 未知结论重试预算验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：test 结论长期模糊时不能无限循环。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "test"),
+      [
+        "# 测试报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 测试策略",
+        "自动化验证。",
+        "",
+        "## 验证范围",
+        "目标页面。",
+        "",
+        "## 测试概要",
+        "已执行。",
+        "",
+        "## 失败项",
+        "无",
+        "",
+        "## Regression 验证",
+        "已执行",
+        "",
+        "## 覆盖范围",
+        "目标页面。",
+        "",
+        "## 开发者决策建议",
+        "待补充最终结论。",
+        "",
+        "## 结论",
+        "待补充",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await harness.tickScheduler.requestTick(workflowId, "test unresolved 1")
+    await harness.tickScheduler.requestTick(workflowId, "test unresolved 2")
+    await harness.tickScheduler.requestTick(workflowId, "test unresolved 3")
+    await harness.tickScheduler.requestTick(workflowId, "test unresolved 4")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+    expect(workflow?.phase).toBe("test")
+    expect(workflow?.status).toBe("waiting_human")
+    expect(humanAction?.action.type).toBe("blocked")
 
     await rm(baseDir, { recursive: true, force: true })
   })
