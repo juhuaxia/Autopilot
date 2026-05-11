@@ -4,10 +4,16 @@ import { dirname } from "node:path"
 export async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await readFile(filePath, "utf8")
+    if (!raw.trim()) {
+      return null
+    }
     return JSON.parse(raw) as T
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (message.includes("ENOENT")) {
+    if (message.includes("ENOENT") || message.includes("ENOTDIR") || message.includes("EINVAL")) {
+      return null
+    }
+    if (error instanceof SyntaxError) {
       return null
     }
     throw error

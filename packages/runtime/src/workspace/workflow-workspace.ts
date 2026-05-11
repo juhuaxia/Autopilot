@@ -19,6 +19,14 @@ export interface WorkflowWorkspace {
 export class DefaultWorkflowWorkspace implements WorkflowWorkspace {
   constructor(private readonly root: string) {}
 
+  private normalizeWorkflowId(workflowId: string): string {
+    const normalized = workflowId.trim()
+    if (!normalized) {
+      throw new Error("workflowId must be a non-empty string")
+    }
+    return normalized
+  }
+
   baseDir(): string {
     return this.root
   }
@@ -32,7 +40,7 @@ export class DefaultWorkflowWorkspace implements WorkflowWorkspace {
   }
 
   workflowDir(workflowId: string): string {
-    return join(this.workflowsRoot(), workflowId)
+    return join(this.workflowsRoot(), this.normalizeWorkflowId(workflowId))
   }
 
   artifactStateFile(workflowId: string): string {

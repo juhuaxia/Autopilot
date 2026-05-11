@@ -56,6 +56,8 @@ type WorkflowToolContext = {
   sessionID?: string
 }
 
+const workflowIdSchema = z.string().min(1).describe("Workflow identifier")
+
 export interface WorkflowPluginEntry {
   name: string
   commands: WorkflowPluginCommandDefinition[]
@@ -359,7 +361,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         args: {
           command: z.enum(commandNames as [WorkflowPluginCommandDefinition["name"], ...WorkflowPluginCommandDefinition["name"][]])
             .describe("Workflow channel command to execute"),
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
           payload: z.string().optional().describe("Optional JSON/string payload for answer-like commands"),
         },
         execute: async (args: WorkflowToolArgs, context?: WorkflowToolContext) => {
@@ -369,7 +371,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
       workflow_open: {
         description: "Open or initialize a workflow channel and attach to it.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
           payload: z.string().optional().describe("Initial request. Supports plain text or JSON: { prompt, docPaths[], projectContext }"),
         },
         execute: async (args: { workflowId: string; payload?: string }, context?: WorkflowToolContext) => invokeCommand("workflow-open", args.workflowId, args.payload, context?.sessionID),
@@ -377,21 +379,21 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
       workflow_attach: {
         description: "Attach to an existing workflow channel.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
         },
         execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-attach", args.workflowId, undefined, context?.sessionID),
       },
       workflow_status: {
         description: "Render the current workflow status block.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
         },
         execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-status", args.workflowId, undefined, context?.sessionID),
       },
       workflow_answer: {
         description: "Answer workflow clarification questions.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
           payload: z.string().describe("JSON string payload for question answers"),
         },
         execute: async (args: { workflowId: string; payload: string }, context?: WorkflowToolContext) => invokeCommand("workflow-answer", args.workflowId, args.payload, context?.sessionID),
@@ -399,21 +401,21 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
       workflow_approve: {
         description: "Approve the current workflow plan or decision.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
         },
         execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-approve", args.workflowId, undefined, context?.sessionID),
       },
       workflow_resume: {
         description: "Resume a blocked workflow.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
         },
         execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resume", args.workflowId, undefined, context?.sessionID),
       },
       workflow_back: {
         description: "Leave the workflow channel without stopping the workflow.",
         args: {
-          workflowId: z.string().describe("Workflow identifier"),
+          workflowId: workflowIdSchema,
         },
         execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-back", args.workflowId, undefined, context?.sessionID),
       },

@@ -10,7 +10,9 @@ export class FileSystemWorkflowStateStore implements WorkflowStateStore {
 
   async listWorkflows(): Promise<WorkflowState[]> {
     try {
-      const workflowIds = await readdir(this.workspace.workflowsRoot())
+      const workflowIds = (await readdir(this.workspace.workflowsRoot(), { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
       const items = await Promise.all(workflowIds.map((workflowId) => this.getWorkflow(workflowId)))
       return items.filter((item): item is WorkflowState => item !== null)
     } catch (error) {

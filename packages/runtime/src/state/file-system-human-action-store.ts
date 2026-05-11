@@ -60,7 +60,9 @@ export class FileSystemHumanActionStore implements HumanActionStore {
     let workflowIds: string[] = []
 
     try {
-      workflowIds = await readdir(workflowsDir)
+      workflowIds = (await readdir(workflowsDir, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!message.includes("ENOENT")) {

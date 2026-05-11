@@ -72,6 +72,7 @@ describe("workflow plugin tool export", () => {
     const plugin = await workflowPlugin({ directory: "/tmp/workflow-plugin-empty-id" })
 
     await expect(plugin.tool.workflow_open.execute({ workflowId: "", payload: "新增空 workflowId 验证。" })).rejects.toThrow("workflowId is required")
+    await expect(plugin.tool.workflow_attach.execute({ workflowId: "" })).rejects.toThrow()
   })
 
   it("re-attaches to a workflow after fresh plugin load (session recovery)", async () => {
