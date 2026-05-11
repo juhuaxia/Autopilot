@@ -4,6 +4,33 @@
 
 Autopilot 是一个面向 OpenCode 风格运行时的 **attached-session workflow harness**。它提供从需求精炼、计划、开发、评审到测试的 workflow runtime 骨架，以及可本地加载的插件、CLI 入口和诊断能力。
 
+## 30 秒上手
+
+1. 在 OpenCode 配置里加入插件：
+
+```json
+{
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
+}
+```
+
+2. 重启 `opencode`，确认看到类似日志：
+
+```txt
+[autopilot] Autopilot plugin loaded (... commands)
+```
+
+3. 直接输入自然语言需求，或调用 `workflow_open` 启动流程；后续按提示继续用 `workflow_attach`、`workflow_answer`、`workflow_approve`、`workflow_resume`。
+
+4. Autopilot 会自动创建：
+
+```txt
+.workflow-harness/autopilot.json
+~/.config/opencode/autopilot.json
+```
+
+如果配置保持空值，就使用默认行为；如果填入值，就会按配置生效。
+
 ## 1. 这个项目提供什么
 
 - 完整 workflow phase 主链：`spec_refinement -> plan -> develop -> review -> test -> done`
@@ -64,7 +91,7 @@ OpenCode 原生支持 npm 插件。等这个包发布后，最简单的配置方
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.2"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
 }
 ```
 
@@ -81,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh 
 安装指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.5
 ```
 
 这个备用安装脚本会：
@@ -371,6 +398,71 @@ opencode serve
   }
 }
 ```
+
+### 字段说明
+
+#### `skillRoots`
+
+- 类型：`string[]`
+- 作用：告诉 Autopilot 去哪些目录扫描 skill 文件
+- 自动初始化默认值：
+
+```json
+["~/.claude/skills", "~/.config/opencode/skills"]
+```
+
+- 如果为空：不额外扫描 skill 根目录
+- 如果有值：会去这些目录里查找 skill 文件或 skill 文件夹，比如 `frontend-design.md` 或 `playwright/SKILL.md`
+
+#### `phases`
+
+- 类型：按 workflow phase 分组的对象
+- 当前支持的 phase key：
+  - `spec_refinement`
+  - `plan`
+  - `develop`
+  - `review`
+  - `test`
+- 作用：为不同 phase 配置 skill 注入
+
+每个 phase 当前支持的字段是：
+
+##### `requiredSkills`
+
+- 类型：`string[]`
+- 作用：把对应 skill 的内容注入到该 phase 的 prompt 中
+- 如果为空：该 phase 只走默认行为
+- 如果有值：Autopilot 会从 `skillRoots` 中解析对应 skill，并注入到 phase prompt 里
+
+示例：
+
+```json
+{
+  "skillRoots": ["~/.claude/skills", "~/.config/opencode/skills"],
+  "phases": {
+    "develop": { "requiredSkills": ["frontend-design"] },
+    "test": { "requiredSkills": ["playwright"] }
+  }
+}
+```
+
+### 自动初始化行为
+
+当配置文件不存在时，Autopilot 会自动创建：
+
+- 全局默认：`~/.config/opencode/autopilot.json`
+- 项目覆盖：`<repo>/.workflow-harness/autopilot.json`
+
+如果它们已经存在，Autopilot 会直接复用。
+
+如果发现旧的 `workflow.json` 还在，而新的 `autopilot.json` 不存在，Autopilot 会复用旧配置，并给出 warning，提示你后续迁移。
+
+### 合并规则
+
+- 全局配置提供默认值
+- 项目配置覆盖全局配置
+- 空数组表示“不额外启用任何配置”，不会报错
+- 缺失值或非法值会尽量回退到默认行为，并在诊断里给出 warning
 
 然后按项目需要添加 skill。以前端项目为例：
 

@@ -4,6 +4,33 @@ English | [中文说明](./GUIDE.zh-CN.md)
 
 Autopilot is an OpenCode-oriented **attached-session workflow harness**. It provides a workflow runtime skeleton covering refinement, planning, development, review, and testing, plus a locally loadable plugin, CLI entrypoints, and diagnostics.
 
+## Quick Start
+
+1. Add the plugin to your OpenCode config:
+
+```json
+{
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
+}
+```
+
+2. Restart `opencode` and confirm you see a log similar to:
+
+```txt
+[autopilot] Autopilot plugin loaded (... commands)
+```
+
+3. Start with a natural-language request, or call `workflow_open` directly. Then continue with `workflow_attach`, `workflow_answer`, `workflow_approve`, or `workflow_resume` as prompted.
+
+4. Autopilot will automatically create:
+
+```txt
+.workflow-harness/autopilot.json
+~/.config/opencode/autopilot.json
+```
+
+If those configs stay empty, the workflow uses default behavior. If you fill values in, they become active.
+
 ## 1. What this project provides
 
 - A full workflow phase chain: `spec_refinement -> plan -> develop -> review -> test -> done`
@@ -62,7 +89,7 @@ You can also pin a version:
 
 ```json
 {
-  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.2"]
+  "plugin": ["@fkqfkq123/opencode-autopilot@0.1.5"]
 }
 ```
 
@@ -79,7 +106,7 @@ curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh 
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash -s -- --version v0.1.5
 ```
 
 The fallback installer will:
@@ -369,6 +396,71 @@ Start with a fully neutral config:
   }
 }
 ```
+
+### What each field means
+
+#### `skillRoots`
+
+- Type: `string[]`
+- Purpose: directories Autopilot scans for skill files
+- Default auto-initialized value:
+
+```json
+["~/.claude/skills", "~/.config/opencode/skills"]
+```
+
+- If empty: no additional skill roots are scanned
+- If present: every listed directory is scanned for skill files and skill folders such as `frontend-design.md` or `playwright/SKILL.md`
+
+#### `phases`
+
+- Type: object keyed by workflow phase name
+- Supported phase keys:
+  - `spec_refinement`
+  - `plan`
+  - `develop`
+  - `review`
+  - `test`
+- Purpose: configure phase-specific skill injection
+
+Each phase currently supports:
+
+##### `requiredSkills`
+
+- Type: `string[]`
+- Purpose: inject matching skill content into that phase prompt
+- If empty: that phase runs with default behavior only
+- If present: Autopilot tries to resolve each skill name from `skillRoots` and injects the result into the phase prompt
+
+Example:
+
+```json
+{
+  "skillRoots": ["~/.claude/skills", "~/.config/opencode/skills"],
+  "phases": {
+    "develop": { "requiredSkills": ["frontend-design"] },
+    "test": { "requiredSkills": ["playwright"] }
+  }
+}
+```
+
+### Auto-initialization behavior
+
+Autopilot automatically creates these files when they are missing:
+
+- global default: `~/.config/opencode/autopilot.json`
+- project override: `<repo>/.workflow-harness/autopilot.json`
+
+If they already exist, Autopilot reuses them.
+
+If an old `workflow.json` file is found and `autopilot.json` is missing, Autopilot can reuse the legacy file and emit a warning so you can migrate cleanly.
+
+### Merge behavior
+
+- Global config provides defaults
+- Project config overrides global config
+- Empty arrays mean “do nothing extra” rather than erroring
+- Missing or invalid values fall back to defaults where possible, and diagnostics may emit warnings
 
 Then add skills per project. For example, for a frontend-oriented project:
 
