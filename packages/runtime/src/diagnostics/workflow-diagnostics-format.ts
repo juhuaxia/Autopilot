@@ -1,5 +1,6 @@
 import type { WorkflowDoctorResult } from "./workflow-doctor"
 import type { WorkflowInstallResult } from "../install/workflow-installer"
+import { AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
 
 const divider = "=".repeat(64)
 
@@ -60,7 +61,7 @@ export function formatWorkflowInstallResult(result: WorkflowInstallResult): stri
   const lines = [
     divider,
     `Workflow Install: ${result.ok ? "OK" : "ATTENTION"}`,
-    `Project workflow.json: ${result.projectWorkflowConfigFile}`,
+    `Project ${AUTOPILOT_CONFIG_FILENAME}: ${result.projectWorkflowConfigFile}`,
     `OpenCode config: ${result.opencodeConfigFile}`,
     `Plugin entry: ${result.pluginEntry}`,
   ]

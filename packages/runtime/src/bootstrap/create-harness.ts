@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import {
   HttpOpencodeSessionClient,
@@ -9,7 +10,7 @@ import { DefaultPhaseTransition } from "../../../core/src/transitions/default-ph
 import { FileSystemArtifactEvaluator } from "../artifacts/file-system-artifact-evaluator"
 import { DefaultAttachService } from "../attach/attach-service"
 import { buildSkillRegistryWithWarnings } from "../config/skill-registry"
-import { resolveWorkflowConfig } from "../config/workflow-config"
+import { ensureAutopilotConfigFile, resolveWorkflowConfig, AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
 import { DefaultWorkflowEngine } from "../engine/default-workflow-engine"
 import { FileSystemWorkflowEventStore } from "../events/file-system-workflow-event-store"
 import { BasicRecoveryClassifier } from "../recovery/basic-recovery-classifier"
@@ -32,6 +33,8 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
   await mkdir(join(baseDir, "workflows"), { recursive: true })
 
   const workspace = new DefaultWorkflowWorkspace(baseDir)
+  await ensureAutopilotConfigFile(workspace.workflowConfigFile())
+  await ensureAutopilotConfigFile(join(homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME))
   const resolvedConfig = await resolveWorkflowConfig({
     projectConfigFile: workspace.workflowConfigFile(),
   })

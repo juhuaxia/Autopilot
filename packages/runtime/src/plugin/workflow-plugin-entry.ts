@@ -428,7 +428,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         },
       },
       workflow_install: {
-        description: "Generate workflow.json and safely register the plugin in OpenCode config.",
+        description: "Generate autopilot.json and safely register the plugin in OpenCode config.",
         args: {},
         execute: async () => {
           return JSON.stringify(await runWorkflowInstall({

@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { access } from "node:fs/promises"
-import { writeJsonFile } from "../shared/json-file"
+import { ensureAutopilotConfigFile, AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
+import { fileExists, writeJsonFile } from "../shared/json-file"
 
 export type WorkflowInstallResult = {
   ok: boolean
@@ -13,23 +13,6 @@ export type WorkflowInstallResult = {
 
 export type WorkflowInstallOptions = {
   pluginEntryFile?: string
-}
-
-const DEFAULT_WORKFLOW_CONFIG = {
-  skillRoots: ["~/.claude/skills", "~/.config/opencode/skills"],
-  phases: {
-    develop: { requiredSkills: [] },
-    test: { requiredSkills: [] },
-  },
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath)
-    return true
-  } catch {
-    return false
-  }
 }
 
 function stripJsonComments(input: string): string {
@@ -68,8 +51,9 @@ export async function runWorkflowInstall(args: {
 }): Promise<WorkflowInstallResult> {
   const repoRoot = resolve(args.cwd)
   const harnessDir = join(repoRoot, ".workflow-harness")
-  const projectWorkflowConfigFile = join(harnessDir, "workflow.json")
+  const projectWorkflowConfigFile = join(harnessDir, AUTOPILOT_CONFIG_FILENAME)
   const opencodeConfigDir = join(args.homeDir, ".config", "opencode")
+  const globalAutopilotConfigFile = join(opencodeConfigDir, AUTOPILOT_CONFIG_FILENAME)
   const pluginEntryFile = args.options?.pluginEntryFile ?? "dist/plugin.js"
   const pluginEntry = `file://${join(repoRoot, pluginEntryFile)}`
   const configResolution = await resolveOpencodeConfigFile(opencodeConfigDir)
@@ -77,12 +61,10 @@ export async function runWorkflowInstall(args: {
   const warnings: string[] = [...configResolution.warnings]
 
   await mkdir(harnessDir, { recursive: true })
-
-  if (!(await fileExists(projectWorkflowConfigFile))) {
-    await writeJsonFile(projectWorkflowConfigFile, DEFAULT_WORKFLOW_CONFIG)
-  }
+  await ensureAutopilotConfigFile(projectWorkflowConfigFile)
 
   await mkdir(opencodeConfigDir, { recursive: true })
+  await ensureAutopilotConfigFile(globalAutopilotConfigFile)
 
   if (!(await fileExists(configResolution.filePath))) {
     await writeJsonFile(opencodeConfigFile, {

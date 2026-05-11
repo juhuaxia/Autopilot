@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { buildSkillRegistryWithWarnings } from "../config/skill-registry"
-import { resolveWorkflowConfig } from "../config/workflow-config"
+import { AUTOPILOT_CONFIG_FILENAME, resolveWorkflowConfig } from "../config/workflow-config"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 
 export type WorkflowDoctorResult = {
@@ -44,7 +44,7 @@ function gitignoreHasWorkflowHarness(content: string): boolean {
 
 export async function runWorkflowDoctor(workspace: WorkflowWorkspace): Promise<WorkflowDoctorResult> {
   const projectConfigFile = workspace.workflowConfigFile()
-  const globalConfigFile = join(homedir(), ".config", "opencode", "workflow.json")
+  const globalConfigFile = join(homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME)
   const resolvedConfig = await resolveWorkflowConfig({
     projectConfigFile,
   })
@@ -70,7 +70,7 @@ export async function runWorkflowDoctor(workspace: WorkflowWorkspace): Promise<W
 
   const hasGlobalConfig = await fileExists(globalConfigFile)
   if (!hasGlobalConfig) {
-    warnings.push(`Global workflow.json not found: ${globalConfigFile}`)
+    warnings.push(`Global ${AUTOPILOT_CONFIG_FILENAME} not found: ${globalConfigFile}`)
   }
 
   const workspaceRoot = workspace.baseDir().endsWith(".workflow-harness")
@@ -112,10 +112,10 @@ export async function runWorkflowDoctor(workspace: WorkflowWorkspace): Promise<W
 
   const nextSteps: string[] = []
   if (!(await fileExists(projectConfigFile))) {
-    nextSteps.push(`Run installer to generate project workflow.json: ${projectConfigFile}`)
+    nextSteps.push(`Run installer to generate project ${AUTOPILOT_CONFIG_FILENAME}: ${projectConfigFile}`)
   }
   if (resolvedConfig.skillRoots.length === 0) {
-    nextSteps.push("Add skillRoots to workflow.json if you want phase skill injection")
+    nextSteps.push(`Add skillRoots to ${AUTOPILOT_CONFIG_FILENAME} if you want phase skill injection`)
   }
   if (missingSkills.length > 0) {
     nextSteps.push("Fix missing requiredSkills or add corresponding skill files under configured skillRoots")
