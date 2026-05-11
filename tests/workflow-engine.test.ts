@@ -568,6 +568,65 @@ describe("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("advances review when pass conclusion exists even if optional sections are omitted", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-pass-optional-sections"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review 可选 section 缺失时仍可通过的验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review 结论 PASS 时，即使可选 section 未填写，也要推进到 test。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "PASS",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "ai-e-detail 文案与 hello-world 路由",
+        "",
+        "## 发现的问题",
+        "无。",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0 | major: 0 | minor: 0 | suggestion: 0",
+        "",
+        "## Regression 风险评估",
+        "极低。",
+        "",
+        "## 结论",
+        "PASS",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await harness.tickScheduler.requestTick(workflowId, "review passed with optional sections omitted")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow?.phase).toBe("test")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("does not continue test when status is COMPLETED but conclusion is fail", async () => {
     const harness = await createHarness(baseDir)
     const workflowId = "wf-test-completed-fail"
@@ -821,6 +880,82 @@ describe("workflow harness MVP", () => {
     const workflow = await harness.stateStore.getWorkflow(workflowId)
     expect(workflow?.phase).toBe("test")
     expect(workflow?.status).toBe("in_progress")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not block test pass on optional sections when evidence is sufficient", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-pass-optional-sections"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 test 可选 section 缺失时仍可推进的验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：test 结论 PASS 且证据充分时，即使可选 section 未填写，也可以保持通过判定。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "test"),
+      [
+        "# 测试报告",
+        "",
+        "## 状态",
+        "PASS",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 测试策略",
+        "自动化校验与已有功能回归验证。",
+        "",
+        "## 验证范围",
+        "目标页面与相关回归范围。",
+        "",
+        "## 测试概要",
+        "测试执行完成，未发现阻塞问题。",
+        "",
+        "## 失败项",
+        "无",
+        "",
+        "## Regression 验证",
+        "通过",
+        "",
+        "## 覆盖范围",
+        "目标页面、关键按钮与相关显示文案。",
+        "",
+        "## 开发者决策建议",
+        "可继续推进。",
+        "",
+        "## 结论",
+        "PASS",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow).not.toBeNull()
+
+    const evaluation = await harness.artifactEvaluator.evaluate(workflow!)
+
+    expect(evaluation.reportStatus).toBe("pass")
+    expect(evaluation.missing).not.toContain("## 新增页面专项验证（如适用）")
+    expect(evaluation.missing).not.toContain("## Figma 高保真验证（如适用）")
+    expect(evaluation.missing).not.toContain("## Key Visual Elements 验证（如适用）")
+    expect(evaluation.missing).not.toContain("## 历史遗留观察项（非阻塞，可选）")
 
     await rm(baseDir, { recursive: true, force: true })
   })

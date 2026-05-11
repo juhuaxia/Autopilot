@@ -188,6 +188,9 @@ const extractSectionBody = (content: string, heading: string, allHeadings: strin
 const sectionHasContent = (content: string, heading: string, allHeadings: string[]): boolean =>
   extractSectionBody(content, heading, allHeadings).length > 0
 
+const isOptionalSection = (heading: string): boolean =>
+  heading.includes("（如适用）") || heading.includes("（非阻塞，可选）")
+
 const sanitizeSummaryBody = (body: string): string => body
   .split("\n")
   .map((line) => line.trim())
@@ -1274,6 +1277,9 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       }
 
       for (const section of sectionRule.sections) {
+        if (isOptionalSection(section)) {
+          continue
+        }
         if (!content.includes(section) || !sectionHasContent(content, section, sectionRule.sections)) {
           missing.push(section)
         }
@@ -1332,8 +1338,8 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             readyForNextPhase: false,
             missing,
             summary: "审查报告结构不完整，暂不能决定 pass/fail",
-            reportStatus: "unknown",
-            hasBlockingSeverity: false,
+            reportStatus: getReportStatus(content),
+            hasBlockingSeverity: hasBlockingSeverity(content),
           }
         }
 
@@ -1343,7 +1349,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             readyForNextPhase: false,
             missing,
             summary: "测试报告证据不足，暂不能决定 pass/fail",
-            reportStatus: "unknown",
+            reportStatus: getReportStatus(content),
             hasBlockingSeverity: false,
           }
         }
