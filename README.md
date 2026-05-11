@@ -123,11 +123,12 @@ bun run build
 What they do:
 
 1. `install`
-   - creates project-level `.workflow-harness/workflow.json`
+   - creates project-level `.workflow-harness/autopilot.json`
+   - creates global `~/.config/opencode/autopilot.json` when missing
    - tries to safely update `~/.config/opencode/opencode.json`
    - normalizes `opencode.jsonc` into `opencode.json` when safe
 2. `doctor`
-   - checks `workflow.json`
+   - checks `autopilot.json`
    - checks `skillRoots`
    - checks phase-level `requiredSkills`
    - reports warnings and missing pieces
@@ -137,7 +138,7 @@ What they do:
 
 After that, confirm:
 
-- `.workflow-harness/workflow.json` exists
+- `.workflow-harness/autopilot.json` exists
 - `doctor` shows no blocking configuration issue
 - `dist/plugin.js` exists
 
@@ -342,8 +343,8 @@ Typical load log:
 
 ### 10.1 Configuration layers
 
-- user default: `~/.config/opencode/workflow.json`
-- project override: `<repo>/.workflow-harness/workflow.json`
+- user default: `~/.config/opencode/autopilot.json`
+- project override: `<repo>/.workflow-harness/autopilot.json`
 - runtime state: `<repo>/.workflow-harness/workflows/<workflowId>/`
 
 ### 10.2 What each directory does
@@ -355,7 +356,7 @@ Typical load log:
 - `.workflow-harness/` — runtime config, state, and artifacts
 - `dist/` — build output
 
-## 11. Minimal `workflow.json` example
+## 11. Minimal `autopilot.json` example
 
 Start with a fully neutral config:
 
@@ -385,7 +386,7 @@ That frontend example is only an example. The workflow runtime is not frontend-b
 
 Recommendations:
 
-- keep skill/profile config in global or project-level `workflow.json`
+- keep skill/profile config in global or project-level `autopilot.json`
 - do not put skill config under `workflows/<workflowId>/`
 - run `workflow_doctor` or CLI `doctor` before using a new config
 
@@ -456,7 +457,7 @@ opencode
 
 Then:
 
-1. confirm `.workflow-harness/workflow.json` exists
+1. confirm `.workflow-harness/autopilot.json` exists
 2. confirm `dist/plugin.js` exists
 3. if OpenCode does not auto-load the plugin, add `file:///ABSOLUTE_PATH_TO_PROJECT/dist/plugin.js` manually to config
 4. verify `workflow_open`, `workflow_attach`, and `workflow_status` are visible in the host
