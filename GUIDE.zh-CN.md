@@ -125,11 +125,12 @@ bun run build
 它们分别会：
 
 1. `install`
-   - 创建项目级 `.workflow-harness/workflow.json`
+   - 创建项目级 `.workflow-harness/autopilot.json`
+   - 在缺失时创建全局 `~/.config/opencode/autopilot.json`
    - 尝试安全写入 `~/.config/opencode/opencode.json`
    - 如有 `opencode.jsonc`，在安全情况下归一化写回 `opencode.json`
 2. `doctor`
-   - 检查 `workflow.json`
+   - 检查 `autopilot.json`
    - 检查 `skillRoots`
    - 检查各 phase 的 `requiredSkills`
    - 输出告警与缺失项
@@ -139,7 +140,7 @@ bun run build
 
 之后建议确认：
 
-- `.workflow-harness/workflow.json` 已生成
+- `.workflow-harness/autopilot.json` 已生成
 - `doctor` 没有阻断性配置问题
 - `dist/plugin.js` 已生成
 
@@ -344,8 +345,8 @@ opencode serve
 
 ### 10.1 配置层级
 
-- 用户默认：`~/.config/opencode/workflow.json`
-- 项目级覆盖：`<repo>/.workflow-harness/workflow.json`
+- 用户默认：`~/.config/opencode/autopilot.json`
+- 项目级覆盖：`<repo>/.workflow-harness/autopilot.json`
 - 运行时状态：`<repo>/.workflow-harness/workflows/<workflowId>/`
 
 ### 10.2 各目录作用
@@ -357,7 +358,7 @@ opencode serve
 - `.workflow-harness/` — 运行时配置、状态与产物
 - `dist/` — 构建输出
 
-## 11. 最小 `workflow.json` 示例
+## 11. 最小 `autopilot.json` 示例
 
 先从完全中性的配置开始：
 
@@ -387,7 +388,7 @@ opencode serve
 
 建议：
 
-- skill / profile 配置放在全局或项目级 `workflow.json`
+- skill / profile 配置放在全局或项目级 `autopilot.json`
 - 不要把 skill 配置写到 `workflows/<workflowId>/`
 - 新配置上线前先跑 `workflow_doctor` 或 CLI `doctor`
 
@@ -458,7 +459,7 @@ opencode
 
 然后：
 
-1. 确认 `.workflow-harness/workflow.json` 已生成
+1. 确认 `.workflow-harness/autopilot.json` 已生成
 2. 确认 `dist/plugin.js` 已生成
 3. 如果 OpenCode 没有自动加载插件，手工把 `file:///ABSOLUTE_PATH_TO_PROJECT/dist/plugin.js` 加到配置里
 4. 在宿主中验证 `workflow_open`、`workflow_attach`、`workflow_status` 是否可见
