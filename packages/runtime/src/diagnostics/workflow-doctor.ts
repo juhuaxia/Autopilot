@@ -42,11 +42,12 @@ function gitignoreHasWorkflowHarness(content: string): boolean {
   })
 }
 
-export async function runWorkflowDoctor(workspace: WorkflowWorkspace): Promise<WorkflowDoctorResult> {
+export async function runWorkflowDoctor(workspace: WorkflowWorkspace, options: { homeDir?: string } = {}): Promise<WorkflowDoctorResult> {
   const projectConfigFile = workspace.workflowConfigFile()
-  const globalConfigFile = join(homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME)
+  const globalConfigFile = join(options.homeDir ?? homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME)
   const resolvedConfig = await resolveWorkflowConfig({
     projectConfigFile,
+    ...(options.homeDir ? { homeDir: options.homeDir } : {}),
   })
   const registryResult = await buildSkillRegistryWithWarnings(resolvedConfig.skillRoots)
   const checks: Array<{ name: string; status: "ok" | "warning" | "error"; detail: string }> = []

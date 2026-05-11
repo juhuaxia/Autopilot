@@ -27,6 +27,7 @@ export interface CreateHarnessOptions {
   sessionClient?: OpencodeSessionClient
   opencodeBaseUrl?: string
   opencodePassword?: string
+  homeDir?: string
 }
 
 export async function createHarness(baseDir: string, options: CreateHarnessOptions = {}) {
@@ -34,9 +35,10 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
 
   const workspace = new DefaultWorkflowWorkspace(baseDir)
   await ensureAutopilotConfigFile(workspace.workflowConfigFile())
-  await ensureAutopilotConfigFile(join(homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME))
+  await ensureAutopilotConfigFile(join(options.homeDir ?? homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME))
   const resolvedConfig = await resolveWorkflowConfig({
     projectConfigFile: workspace.workflowConfigFile(),
+    ...(options.homeDir ? { homeDir: options.homeDir } : {}),
   })
   const skillRegistryResult = await buildSkillRegistryWithWarnings(resolvedConfig.skillRoots)
   const skillRegistry = skillRegistryResult.registry

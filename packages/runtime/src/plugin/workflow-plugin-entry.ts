@@ -103,7 +103,7 @@ Hard rules:
 `
 
 const WORKFLOW_PRIMARY_AGENT_DESCRIPTION = "Primary workflow agent that drives refine->plan->develop->review->test via workflow tools"
-const WORKFLOW_PRIMARY_AGENT_MODEL = "ppchat-codex/gpt-5.4"
+const WORKFLOW_PRIMARY_AGENT_MODEL = "openai/gpt-5.5"
 
 function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadata {
   return {

@@ -8,9 +8,11 @@ import { runWorkflowDoctor } from "../packages/runtime/src/diagnostics/workflow-
 describe("workflow doctor", () => {
   it("reports missing config and missing skills without throwing", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-doctor-"))
-    const harness = await createHarness(baseDir)
+    const homeDir = join(baseDir, "home")
+    await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
+    const harness = await createHarness(baseDir, { homeDir })
 
-    const result = await runWorkflowDoctor(harness.workspace)
+    const result = await runWorkflowDoctor(harness.workspace, { homeDir })
 
     expect(result.ok).toBe(true)
     expect(result.projectConfigFile).toContain("autopilot.json")
@@ -23,7 +25,9 @@ describe("workflow doctor", () => {
 
   it("reports resolved skills and missing skill warnings", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-doctor-skill-"))
+    const homeDir = join(baseDir, "home")
     const skillRoot = join(baseDir, "skills")
+    await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
     await mkdir(skillRoot, { recursive: true })
     await writeFile(join(skillRoot, "frontend-design.md"), "# frontend-design\n")
     await writeFile(
@@ -36,8 +40,8 @@ describe("workflow doctor", () => {
       }, null, 2),
     )
 
-    const harness = await createHarness(baseDir)
-    const result = await runWorkflowDoctor(harness.workspace)
+    const harness = await createHarness(baseDir, { homeDir })
+    const result = await runWorkflowDoctor(harness.workspace, { homeDir })
 
     expect(result.ok).toBe(false)
     expect(result.skillRoots).toContain(skillRoot)
@@ -52,11 +56,13 @@ describe("workflow doctor", () => {
 
   it("reports gitignore hygiene status", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-doctor-gitignore-"))
+    const homeDir = join(baseDir, "home")
+    await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
     await mkdir(join(baseDir, ".workflow-harness"), { recursive: true })
     await writeFile(join(baseDir, ".gitignore"), "dist/\n.workflow-harness/workflows/\n")
 
-    const harness = await createHarness(baseDir)
-    const result = await runWorkflowDoctor(harness.workspace)
+    const harness = await createHarness(baseDir, { homeDir })
+    const result = await runWorkflowDoctor(harness.workspace, { homeDir })
 
     expect(result.checks.some((check) => check.name === "gitignore-workflow-harness" && check.status === "ok")).toBe(true)
     expect(result.nextSteps.some((step) => step.includes("Consider ignoring .workflow-harness/"))).toBe(false)
