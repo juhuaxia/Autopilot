@@ -1,5 +1,7 @@
 export type RecoveryState = "idle" | "recovering"
 
+export type PhaseDispatchAttempts = Partial<Record<"spec_refinement" | "plan" | "develop" | "review" | "test", number>>
+
 export interface WorkflowRuntimeState {
   workflowId: string
   preferredForegroundSessionId?: string | null
@@ -12,4 +14,5 @@ export interface WorkflowRuntimeState {
   refinementLastDispatchSummary?: string | null
   refinementEscalationReason?: string | null
   lastContinuationAt?: string
+  phaseDispatchAttempts?: PhaseDispatchAttempts
 }

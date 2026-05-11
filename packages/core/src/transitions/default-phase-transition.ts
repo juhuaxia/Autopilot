@@ -4,6 +4,29 @@ import type { PhaseTransition, PhaseTransitionInput } from "./phase-transition"
 import type { TransitionAction } from "./transition-action"
 
 const MAX_SPEC_REFINEMENT_SELF_REPAIR_ATTEMPTS = 1
+const MAX_CONSECUTIVE_FAILURES = 3
+const MAX_REVIEW_OR_TEST_UNKNOWN_DISPATCH_ATTEMPTS = 3
+
+function getPhaseDispatchAttempts(runtime: PhaseTransitionInput["runtime"], phase: Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test">): number {
+  return runtime.phaseDispatchAttempts?.[phase] ?? 0
+}
+
+function shouldEscalateUnknownConclusion(input: PhaseTransitionInput, phase: "review" | "test"): TransitionAction | null {
+  if (getPhaseDispatchAttempts(input.runtime, phase) < MAX_REVIEW_OR_TEST_UNKNOWN_DISPATCH_ATTEMPTS) {
+    return null
+  }
+
+  const action: HumanAction = {
+    type: "blocked",
+    workflowId: input.workflow.workflowId,
+    phase,
+    reason: `${phase} exceeded dispatch retry budget and needs human decision`,
+    required: true,
+    createdAt: new Date().toISOString(),
+    ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
+  }
+  return { type: "wait_human", action }
+}
 
 function nextPhaseFor(current: Phase): Phase | null {
   if (current === "spec_refinement") return "plan"
@@ -78,6 +101,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (session.status === "failed") {
+      if (runtime.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        return { type: "recover", reason: "Exceeded consecutive failure retry budget" }
+      }
       return { type: "recover", reason: "Relevant session failed" }
     }
 
@@ -127,10 +153,10 @@ export class DefaultPhaseTransition implements PhaseTransition {
 
       if (artifact.reportStatus === "fail") {
         if (artifact.hasBlockingSeverity) {
-          if (workflow.iteration + 1 >= workflow.maxIterations) {
-            return {
-              type: "recover",
-              reason: "Exceeded maxIterations while fixing review issues",
+      if (workflow.iteration + 1 >= workflow.maxIterations) {
+        return {
+          type: "recover",
+          reason: "Exceeded maxIterations while fixing review issues",
             }
           }
 
@@ -160,6 +186,18 @@ export class DefaultPhaseTransition implements PhaseTransition {
           type: "dispatch",
           phase: workflow.phase,
           reason: `Continue phase ${workflow.phase}`,
+        }
+      }
+
+      if (artifact.reportStatus === "unknown" && workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
+        const escalation = shouldEscalateUnknownConclusion(input, "review")
+        if (escalation) {
+          return escalation
+        }
+        return {
+          type: "dispatch",
+          phase: workflow.phase,
+          reason: "Review conclusion is still ambiguous; set an explicit PASS or FAIL conclusion",
         }
       }
     }
@@ -193,6 +231,18 @@ export class DefaultPhaseTransition implements PhaseTransition {
           type: "dispatch",
           phase: workflow.phase,
           reason: `Continue phase ${workflow.phase}`,
+        }
+      }
+
+      if (artifact.reportStatus === "unknown" && workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
+        const escalation = shouldEscalateUnknownConclusion(input, "test")
+        if (escalation) {
+          return escalation
+        }
+        return {
+          type: "dispatch",
+          phase: workflow.phase,
+          reason: "Test conclusion is still ambiguous; set an explicit PASS or FAIL conclusion",
         }
       }
     }
