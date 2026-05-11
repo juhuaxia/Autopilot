@@ -1,5 +1,6 @@
 import { join } from "node:path"
 import type { Phase } from "../../../core/src/state/phase"
+import { AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
 
 export interface WorkflowWorkspace {
   baseDir(): string
@@ -36,7 +37,7 @@ export class DefaultWorkflowWorkspace implements WorkflowWorkspace {
   }
 
   workflowConfigFile(): string {
-    return join(this.root, "workflow.json")
+    return join(this.root, AUTOPILOT_CONFIG_FILENAME)
   }
 
   workflowDir(workflowId: string): string {

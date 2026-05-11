@@ -1,6 +1,8 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { readJsonFile } from "../shared/json-file"
+import { fileExists, readJsonFile, writeJsonFile } from "../shared/json-file"
+
+export const AUTOPILOT_CONFIG_FILENAME = "autopilot.json"
 
 export type WorkflowConfigPhase = "spec_refinement" | "plan" | "develop" | "review" | "test"
 
@@ -17,6 +19,17 @@ export type ResolvedWorkflowConfig = {
   skillRoots: string[]
   phases: Partial<Record<WorkflowConfigPhase, WorkflowPhaseConfig>>
   warnings: string[]
+}
+
+export const DEFAULT_AUTOPILOT_CONFIG: WorkflowConfigFile = {
+  skillRoots: [],
+  phases: {
+    spec_refinement: { requiredSkills: [] },
+    plan: { requiredSkills: [] },
+    develop: { requiredSkills: [] },
+    review: { requiredSkills: [] },
+    test: { requiredSkills: [] },
+  },
 }
 
 const EMPTY_CONFIG: ResolvedWorkflowConfig = {
@@ -72,8 +85,15 @@ export async function resolveWorkflowConfig(args: {
   projectConfigFile: string
   homeDir?: string
 }): Promise<ResolvedWorkflowConfig> {
-  const globalConfigFile = join(args.homeDir ?? homedir(), ".config", "opencode", "workflow.json")
+  const globalConfigFile = join(args.homeDir ?? homedir(), ".config", "opencode", AUTOPILOT_CONFIG_FILENAME)
   const globalConfig = await readJsonFile<WorkflowConfigFile>(globalConfigFile)
   const projectConfig = await readJsonFile<WorkflowConfigFile>(args.projectConfigFile)
   return mergeConfigs(mergeConfigs(EMPTY_CONFIG, globalConfig), projectConfig)
+}
+
+export async function ensureAutopilotConfigFile(filePath: string): Promise<void> {
+  if (await fileExists(filePath)) {
+    return
+  }
+  await writeJsonFile(filePath, DEFAULT_AUTOPILOT_CONFIG)
 }

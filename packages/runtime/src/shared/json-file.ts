@@ -1,5 +1,14 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
+
+export async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
 
 export async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
