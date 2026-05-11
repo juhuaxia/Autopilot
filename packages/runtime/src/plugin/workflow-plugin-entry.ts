@@ -33,7 +33,7 @@ type NativeAgentConfig = {
   description: string
   model: string
   prompt: string
-  tools: string[]
+  tools: Record<string, boolean>
 }
 
 type NativeHostConfig = {
@@ -66,7 +66,7 @@ type WorkflowPrimaryAgentMetadata = {
   mode: "primary"
   description: string
   model: string
-  tools: string[]
+  tools: Record<string, boolean>
   promptFile: string
   manifestFile: string
 }
@@ -107,15 +107,15 @@ function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadat
     mode: "primary",
     description: WORKFLOW_PRIMARY_AGENT_DESCRIPTION,
     model: WORKFLOW_PRIMARY_AGENT_MODEL,
-    tools: [
-      "workflow_open",
-      "workflow_attach",
-      "workflow_status",
-      "workflow_answer",
-      "workflow_approve",
-      "workflow_resume",
-      "workflow_back",
-    ],
+    tools: {
+      workflow_open: true,
+      workflow_attach: true,
+      workflow_status: true,
+      workflow_answer: true,
+      workflow_approve: true,
+      workflow_resume: true,
+      workflow_back: true,
+    },
     promptFile: `${baseDir}/workflow-primary-agent.prompt.md`,
     manifestFile: `${baseDir}/workflow-primary-agent.manifest.json`,
   }

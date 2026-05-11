@@ -102,7 +102,7 @@ describe("workflow plugin tool export", () => {
         description: string
         model: string
         prompt: string
-        tools: string[]
+        tools: Record<string, boolean>
       }>
     } = {}
 
@@ -111,7 +111,7 @@ describe("workflow plugin tool export", () => {
     const workflowAgent = cfg.agent?.workflow
     expect(workflowAgent).toBeDefined()
     expect(workflowAgent?.mode).toBe("primary")
-    expect(workflowAgent?.tools).toContain("workflow_open")
+    expect(workflowAgent?.tools.workflow_open).toBe(true)
     expect(workflowAgent?.prompt).toContain("workflow execution agent")
   })
 
