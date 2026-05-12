@@ -240,7 +240,7 @@ describe("workflow harness MVP", () => {
     expect(storedTestSession?.lastPrompt).toContain("[PHASE] test")
     expect(storedTestSession?.lastPrompt).toContain("[SOURCE_REVIEW_ARTIFACT]")
     expect(storedTestSession?.lastPrompt).toContain("[TEST_POLICY]")
-    expect(storedTestSession?.lastPrompt).toContain("previously working features")
+    expect(storedTestSession?.lastPrompt).toContain("upstream/downstream files")
 
     await harness.artifactEvaluator.setTestReport(workflowId, "pass")
     await harness.tickScheduler.requestTick(workflowId, "test passed")
