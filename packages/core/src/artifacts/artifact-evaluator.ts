@@ -6,6 +6,7 @@ export interface ArtifactEvaluation {
   valid: boolean
   readyForNextPhase: boolean
   missing: string[]
+  warnings?: string[]
   summary?: string
   questions?: Question[]
   requiresApproval?: boolean

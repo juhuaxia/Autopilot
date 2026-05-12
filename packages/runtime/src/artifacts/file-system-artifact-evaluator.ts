@@ -10,6 +10,7 @@ interface PhaseArtifactState {
   valid: boolean
   readyForNextPhase: boolean
   missing?: string[]
+  warnings?: string[]
   summary?: string
   questions?: Question[]
   initialRequest?: string
@@ -167,18 +168,36 @@ const SECTION_RULES: Record<Extract<Phase, "spec_refinement" | "plan" | "develop
   },
 }
 
+const NON_BLOCKING_SECTIONS: Partial<Record<Extract<Phase, "develop" | "review" | "test">, string[]>> = {
+  develop: ["## 配套修改", "## 备注", "## 报告语言"],
+  review: ["## 组件复用验收结果（如适用）", "## Section 验收映射检查结果（如适用）", "## 历史遗留观察项（非阻塞，可选）", "## 报告语言"],
+  test: ["## 新增页面专项验证（如适用）", "## Figma 高保真验证（如适用）", "## Key Visual Elements 验证（如适用）", "## 历史遗留观察项（非阻塞，可选）", "## 开发者决策建议", "## 报告语言"],
+}
+
 const stripComments = (content: string): string =>
   content.replace(/<!--([\s\S]*?)-->/g, "").trim()
 
+/**
+ * Find the index of a markdown heading in content, matching ONLY at line start
+ * with exact heading level. Prevents false matches like "### 结论：..." hitting "## 结论".
+ */
+const findHeadingIndex = (content: string, heading: string, startIndex = 0): number => {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const regex = new RegExp(`^${escaped}(?:$|\\s)`, "m")
+  const sliced = startIndex > 0 ? content.slice(startIndex) : content
+  const match = regex.exec(sliced)
+  return match ? match.index + startIndex : -1
+}
+
 const extractSectionBody = (content: string, heading: string, allHeadings: string[]): string => {
-  const start = content.indexOf(heading)
+  const start = findHeadingIndex(content, heading)
   if (start === -1) {
     return ""
   }
 
   const afterHeading = start + heading.length
   const nextHeadingIndexes = allHeadings
-    .map((nextHeading) => content.indexOf(nextHeading, afterHeading))
+    .map((nextHeading) => findHeadingIndex(content, nextHeading, afterHeading))
     .filter((index) => index !== -1)
   const end = nextHeadingIndexes.length > 0 ? Math.min(...nextHeadingIndexes) : content.length
 
@@ -982,6 +1001,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
           valid: fromWorkspace.valid ?? false,
           readyForNextPhase: fromWorkspace.readyForNextPhase ?? false,
           missing: fromWorkspace.missing,
+          warnings: fromWorkspace.warnings,
           initialRequest,
         }
         if (fromWorkspace.summary) {
@@ -1000,6 +1020,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       valid: fromWorkspace.valid ?? current.valid,
       readyForNextPhase: fromWorkspace.readyForNextPhase ?? current.readyForNextPhase,
       missing: fromWorkspace.missing.length > 0 ? fromWorkspace.missing : current.missing ?? [],
+      warnings: fromWorkspace.warnings && fromWorkspace.warnings.length > 0 ? fromWorkspace.warnings : current.warnings ?? [],
     }
 
     if (fromWorkspace.summary) {
@@ -1060,6 +1081,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       summary: evaluation.summary ?? "Specification updated after answers",
       questions: evaluation.questions ?? [],
       missing: evaluation.missing,
+      warnings: evaluation.warnings,
       initialRequest,
     })
     await this.writePhaseArtifact(workflowId, "spec_refinement", nextContent)
@@ -1256,9 +1278,9 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
   private evaluatePhaseContent(
     phase: Phase,
     content: string,
-  ): Partial<ArtifactEvaluation> & { missing: string[] } {
+  ): Partial<ArtifactEvaluation> & { missing: string[]; warnings: string[] } {
     if (!content.trim()) {
-      return { valid: false, readyForNextPhase: false, missing: ["artifact file is empty"] }
+      return { valid: false, readyForNextPhase: false, missing: ["artifact file is empty"], warnings: [] }
     }
 
     const sectionRule = phase === "spec_refinement"
@@ -1271,6 +1293,12 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
 
     if (sectionRule) {
       const missing = [] as string[]
+      const warnings = [] as string[]
+      const nonBlockingSections = new Set(
+        (phase === "develop" || phase === "review" || phase === "test")
+          ? NON_BLOCKING_SECTIONS[phase] ?? []
+          : [],
+      )
 
       if (!content.includes(sectionRule.title)) {
         missing.push(sectionRule.title)
@@ -1281,6 +1309,10 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
           continue
         }
         if (!content.includes(section) || !sectionHasContent(content, section, sectionRule.sections)) {
+          if (nonBlockingSections.has(section)) {
+            warnings.push(section)
+            continue
+          }
           missing.push(section)
         }
       }
@@ -1317,6 +1349,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             valid: false,
             readyForNextPhase: false,
             missing,
+            warnings,
             summary: "规格精炼报告未满足进入 plan 的要求",
             ...(questions.length > 0 ? { questions } : {}),
           }
@@ -1327,6 +1360,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             valid: false,
             readyForNextPhase: false,
             missing,
+            warnings,
             requiresApproval: false,
             summary: "开发计划结构不完整，暂不能进入审批",
           }
@@ -1337,6 +1371,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             valid: false,
             readyForNextPhase: false,
             missing,
+            warnings,
             summary: "审查报告结构不完整，暂不能决定 pass/fail",
             reportStatus: getReportStatus(content),
             hasBlockingSeverity: hasBlockingSeverity(content),
@@ -1348,6 +1383,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
             valid: false,
             readyForNextPhase: false,
             missing,
+            warnings,
             summary: "测试报告证据不足，暂不能决定 pass/fail",
             reportStatus: getReportStatus(content),
             hasBlockingSeverity: false,
@@ -1358,7 +1394,44 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
           valid: false,
           readyForNextPhase: false,
           missing,
+          warnings,
           summary: "开发报告未满足完成条件",
+        }
+      }
+
+      if (warnings.length > 0) {
+        if (phase === "develop") {
+          return {
+            valid: true,
+            readyForNextPhase: true,
+            missing: [],
+            warnings,
+            summary: "Development complete",
+          }
+        }
+
+        if (phase === "review") {
+          return {
+            valid: true,
+            readyForNextPhase: false,
+            missing: [],
+            warnings,
+            summary: "Review report is ready for routing",
+            reportStatus: getReportStatus(content),
+            hasBlockingSeverity: hasBlockingSeverity(content),
+          }
+        }
+
+        if (phase === "test") {
+          return {
+            valid: true,
+            readyForNextPhase: false,
+            missing: [],
+            warnings,
+            summary: "Test report is ready for routing",
+            reportStatus: getReportStatus(content),
+            hasBlockingSeverity: false,
+          }
         }
       }
     }
@@ -1368,6 +1441,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         valid: true,
         readyForNextPhase: true,
         missing: [],
+        warnings: [],
         summary: "Spec refinement is ready for planning",
         questions: [],
       }
@@ -1378,6 +1452,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         valid: true,
         readyForNextPhase: false,
         missing: [],
+        warnings: [],
         requiresApproval: true,
         summary: "Plan drafted and awaiting approval",
       }
@@ -1388,6 +1463,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         valid: true,
         readyForNextPhase: true,
         missing: [],
+        warnings: [],
         summary: "Development complete",
       }
     }
@@ -1397,6 +1473,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         valid: true,
         readyForNextPhase: false,
         missing: [],
+        warnings: [],
         summary: "Review report is ready for routing",
         reportStatus: getReportStatus(content),
         hasBlockingSeverity: hasBlockingSeverity(content),
@@ -1408,12 +1485,13 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         valid: true,
         readyForNextPhase: false,
         missing: [],
+        warnings: [],
         summary: "Test report is ready for routing",
         reportStatus: getReportStatus(content),
         hasBlockingSeverity: false,
       }
     }
 
-    return { valid: false, readyForNextPhase: false, missing: [] }
+    return { valid: false, readyForNextPhase: false, missing: [], warnings: [] }
   }
 }
