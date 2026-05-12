@@ -1,6 +1,13 @@
 import { initializeWorkflow } from "../bootstrap/initialize-workflow"
 import { renderHumanActionBlock } from "../presentation/human-action-renderer"
 import { buildWorkflowOpenRequest } from "./workflow-open-request"
+import {
+  classifyWorkflowIntent,
+  formatRoutingOutput,
+  generateDerivedWorkflowId,
+  type WorkflowRoutingDecision,
+  type WorkflowRouterInput,
+} from "./workflow-router"
 import type { WorkflowCommandResult, WorkflowCommandRunner } from "./workflow-command-runner"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -13,8 +20,16 @@ function assertWorkflowId(workflowId: string): void {
   }
 }
 
+function findHeadingIndex(content: string, heading: string, startIndex = 0): number {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const regex = new RegExp(`^${escaped}(?:$|\\s)`, "m")
+  const sliced = startIndex > 0 ? content.slice(startIndex) : content
+  const match = regex.exec(sliced)
+  return match ? match.index + startIndex : -1
+}
+
 function extractSection(content: string, heading: string): string {
-  const start = content.indexOf(heading)
+  const start = findHeadingIndex(content, heading)
   if (start === -1) {
     return ""
   }
@@ -60,6 +75,10 @@ async function buildStatusEnhancements(args: {
 
   if (evaluation.missing.length > 0) {
     lines.push(`Missing signals: ${evaluation.missing.join(" | ")}`)
+  }
+
+  if (evaluation.warnings && evaluation.warnings.length > 0) {
+    lines.push(`Warning signals: ${evaluation.warnings.join(" | ")}`)
   }
 
   if (workflow.phase === "develop") {
@@ -155,6 +174,53 @@ type PendingClarification = {
   rawPayload: string
   prompt: string
   options: string[]
+}
+
+async function buildWorkflowStatusResult(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  workflowId: string
+  prefixOutput?: string
+}): Promise<WorkflowCommandResult> {
+  const { harness, workflowId, prefixOutput } = args
+  const workflow = await harness.stateStore.getWorkflow(workflowId)
+  const runtime = await harness.stateStore.getRuntime(workflowId)
+  const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+  const events = await harness.eventStore.list(workflowId)
+  const clarification = await readPendingClarification(harness, workflowId)
+  if (!workflow) {
+    if (clarification) {
+      return {
+        ok: true,
+        output: [clarification.prompt, ...clarification.options].join("\n"),
+        events: [],
+      }
+    }
+    throw new Error(`Workflow not found: ${workflowId}`)
+  }
+
+  const enhancementLines = await buildStatusEnhancements({
+    harness,
+    workflow,
+    events,
+  })
+
+  const statusBlock = renderHumanActionBlock({
+    workflow,
+    runtime,
+    humanAction,
+    clarification: clarification
+      ? { prompt: clarification.prompt, options: clarification.options }
+      : null,
+    phaseDetails: enhancementLines,
+  })
+
+  return {
+    ok: true,
+    output: prefixOutput
+      ? [prefixOutput, "", statusBlock].join("\n")
+      : statusBlock,
+    events,
+  }
 }
 
 function clarificationFilePath(harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>, workflowId: string): string {
@@ -253,7 +319,10 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
 
     if (command === "workflow-open") {
       const openRequest = await buildWorkflowOpenRequest(payload, process.cwd())
-      if (openRequest.needsClarification) {
+
+      // Skip clarification for routing-capable inputs; only clarify
+      // pure document references that lack action intent
+      if (openRequest.needsClarification && !openRequest.continuationIntent) {
         await savePendingClarification(harness, workflowId, {
           rawPayload: payload ?? "",
           prompt: openRequest.clarificationQuestion ?? "我需要先确认你的意图。",
@@ -269,18 +338,96 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           events: [],
         }
       }
-      await initializeWorkflow({
-        workflowId,
-        stateStore: harness.stateStore,
-        artifactEvaluator: harness.artifactEvaluator,
-        userRequest: openRequest.userRequest,
-      })
-      if (foregroundSessionId) {
-        await harness.stateStore.updateRuntime(workflowId, {
-          preferredForegroundSessionId: foregroundSessionId,
-        })
+
+      const workflows = await harness.stateStore.listWorkflows?.() ?? []
+      const activeWorkflows = workflows.filter((wf) => wf.status !== "completed" && wf.status !== "blocked")
+
+      let pendingHumanActionWorkflowId: string | undefined
+      for (const wf of activeWorkflows) {
+        const ha = await harness.humanActionStore.getCurrent(wf.workflowId)
+        if (ha && (ha.status === "pending" || ha.status === "presented")) {
+          pendingHumanActionWorkflowId = wf.workflowId
+          break
+        }
       }
-      await harness.attachService.attach(workflowId)
+
+      const primaryWorkflow = activeWorkflows[0] ?? null
+
+      const routerInput: WorkflowRouterInput = {
+        rawPayload: payload ?? "",
+        prompt: openRequest.prompt,
+        requestedWorkflowId: workflowId,
+        activeWorkflows,
+        primaryWorkflow,
+        hasPendingHumanAction: !!pendingHumanActionWorkflowId,
+        ...(pendingHumanActionWorkflowId ? { pendingHumanActionWorkflowId } : {}),
+      }
+
+      const routingDecision = classifyWorkflowIntent(routerInput)
+
+      const hasAnyWorkflow = activeWorkflows.length > 0 || !!pendingHumanActionWorkflowId
+
+      switch (routingDecision.action) {
+        case "continue": {
+          if (!hasAnyWorkflow) {
+            return {
+              ok: true,
+              output: formatRoutingOutput({ action: "confirm", reason: "continue-requested-but-no-workflow-to-continue" }),
+              events: [],
+            }
+          }
+          const targetId = routingDecision.targetWorkflowId ?? workflowId
+          if (foregroundSessionId) {
+            await harness.stateStore.updateRuntime(targetId, {
+              preferredForegroundSessionId: foregroundSessionId,
+            })
+          }
+          await harness.attachService.attach(targetId)
+          return buildWorkflowStatusResult({
+            harness,
+            workflowId: targetId,
+            prefixOutput: formatRoutingOutput(routingDecision),
+          })
+        }
+
+        case "fork":
+          if (!hasAnyWorkflow) {
+            return {
+              ok: true,
+              output: formatRoutingOutput({ action: "confirm", reason: "fork-requested-but-no-parent-workflow" }),
+              events: [],
+            }
+          }
+        // fall through to "new" handler
+        case "new": {
+          const targetId = routingDecision.targetWorkflowId ?? workflowId
+          await initializeWorkflow({
+            workflowId: targetId,
+            stateStore: harness.stateStore,
+            artifactEvaluator: harness.artifactEvaluator,
+            userRequest: openRequest.userRequest,
+          })
+          if (foregroundSessionId) {
+            await harness.stateStore.updateRuntime(targetId, {
+              preferredForegroundSessionId: foregroundSessionId,
+            })
+          }
+          await harness.attachService.attach(targetId)
+          return buildWorkflowStatusResult({
+            harness,
+            workflowId: targetId,
+            prefixOutput: formatRoutingOutput(routingDecision),
+          })
+        }
+
+        case "confirm": {
+          return {
+            ok: true,
+            output: formatRoutingOutput(routingDecision),
+            events: [],
+          }
+        }
+      }
     } else if (command === "workflow-attach") {
       const clarification = await renderClarificationIfAny(harness, workflowId)
       if (clarification) {
@@ -353,42 +500,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       }
     }
 
-    const workflow = await harness.stateStore.getWorkflow(workflowId)
-    const runtime = await harness.stateStore.getRuntime(workflowId)
-    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
-    const events = await harness.eventStore.list(workflowId)
-    const clarification = await readPendingClarification(harness, workflowId)
-    if (!workflow) {
-      if (clarification) {
-        return {
-          ok: true,
-          output: [clarification.prompt, ...clarification.options].join("\n"),
-          events: [],
-        }
-      }
-      throw new Error(`Workflow not found: ${workflowId}`)
-    }
-
-    const enhancementLines = await buildStatusEnhancements({
+    return buildWorkflowStatusResult({
       harness,
-      workflow,
-      events,
+      workflowId,
     })
-
-    return {
-      ok: true,
-      output: [
-        renderHumanActionBlock({
-          workflow,
-          runtime,
-          humanAction,
-          clarification: clarification
-            ? { prompt: clarification.prompt, options: clarification.options }
-            : null,
-          phaseDetails: enhancementLines,
-        }),
-      ].join("\n"),
-      events,
-    }
   }
 }

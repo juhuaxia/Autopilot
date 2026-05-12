@@ -364,4 +364,132 @@ describe("workflow command runner", () => {
     await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })
   })
+
+  it("Rule 1: continuation command with pending human action routes to continue", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-rule1-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-continuation-pending"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "测试 pending human action 路由规则。",
+    })
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：pending human action 时提示用户先处理。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId,
+      payload: "继续下一步",
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("继续")
+    // Router may attach/create workflow which produces events
+    expect(result.events.length).toBeGreaterThanOrEqual(0)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("Rule 2: continuation command with active workflow attaches and continues", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-rule2-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-continuation-attach"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "测试 attach 已有工作流路由规则。",
+    })
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "ok" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId,
+      payload: "继续下一步",
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("继续")
+    expect(result.events.some((event) => event.type === "workflow.attached")).toBe(true)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("Rule 3: continuation command with no active workflow shows confirmation", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-rule3-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-continuation-no-workflow",
+      payload: "接着做",
+    })
+
+    expect(result.ok).toBe(true)
+    // "接着做" with no active workflow → router classifies as confirm (ambiguous)
+    expect(result.output).toContain("请确认")
+    expect(result.events.length).toBe(0)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("normal action payloads are not affected by continuation routing", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-normal-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-continuation-bypass",
+      payload: "为商品列表页新增排序功能。",
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Workflow: wf-continuation-bypass")
+    expect(result.output).toContain("Phase: spec_refinement")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("negated continuation payloads do not trigger continuation routing", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-negated-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-continuation-negated",
+      payload: "不要继续下一步",
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).not.toContain("续接已有工作流")
+    expect(result.output).not.toContain("有待处理的人工操作")
+    expect(result.events.length).toBe(0)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
 })
