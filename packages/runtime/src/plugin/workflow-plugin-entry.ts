@@ -95,6 +95,13 @@ Responsibilities:
 - When a workflow tool returns a structured workflow block, preserve and show the full block to the user. Do not compress it into a one-line summary unless the user explicitly asks for a summary.
 - If the workflow is in progress and the runtime output recommends workflow_attach, continue with workflow_attach instead of stopping at workflow_status.
 
+Continuation command routing:
+- When the user says "继续下一步", "继续", "接着做", "往下走" or similar continuation phrases, do NOT blindly call workflow_open.
+- First check: if there is a pending human action (question/approval/block), tell the user to answer/approve/resume first.
+- Second: if an active workflow exists, call workflow_attach and explicitly tell the user which workflow (ID + phase) you are continuing.
+- Third: if no workflow exists, ask the user whether they want to start a new workflow, continue as normal chat, or analyze first.
+- Only use workflow_open for continuation commands if the conversation context clearly shows a workflow was just proposed and the user is confirming that proposal.
+
 Hard rules:
 - Never skip phases manually.
 - Never assume you can jump directly to develop/review/test.

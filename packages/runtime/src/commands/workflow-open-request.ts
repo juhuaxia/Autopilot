@@ -13,6 +13,21 @@ type WorkflowOpenRequestJson = {
   projectContext?: string
 }
 
+/**
+ * Result of detecting a continuation-type ambiguous command like
+ * "继续下一步", "继续", "接着做", "往下走".
+ *
+ * These commands are NOT natural workflow_open triggers — they need
+ * context-aware routing based on pending human actions, active workflows,
+ * and whether a workflow was recently proposed.
+ */
+export type ContinuationIntent = {
+  /** The raw trimmed payload that was detected as a continuation command */
+  rawPayload: string
+  /** Which continuation pattern matched */
+  matchedPattern: string
+}
+
 export interface WorkflowOpenRequest {
   userRequest: string
   prompt: string
@@ -21,6 +36,13 @@ export interface WorkflowOpenRequest {
   needsClarification: boolean
   clarificationQuestion?: string
   clarificationOptions?: string[]
+  /**
+   * Populated when the payload looks like a continuation-type command
+   * (e.g. "继续下一步", "接着做"). Null for normal workflow-open payloads.
+   * The command runner uses this to apply 4-rule routing instead of
+   * the standard open flow.
+   */
+  continuationIntent?: ContinuationIntent | null
 }
 
 const trimToEmpty = (value: string | undefined): string => value?.trim() ?? ""
@@ -179,6 +201,52 @@ const actionHints = [
   "test",
 ]
 
+/**
+ * Continuation-type patterns that indicate the user wants to "continue"
+ * rather than start something new.
+ *
+ * Deliberately NOT added to actionHints — these must go through
+ * 4-rule routing in the command runner, not the standard open flow.
+ */
+const continuationPatterns = [
+  "继续下一步",
+  "继续做",
+  "接着做",
+  "往下走",
+  "继续",
+]
+
+const continuationNegationPrefixes = [
+  "不要",
+  "先不要",
+  "别",
+  "先别",
+  "不",
+]
+
+function isNegatedContinuationPayload(payload: string): boolean {
+  return continuationNegationPrefixes.some((prefix) => continuationPatterns.some((pattern) => payload.startsWith(`${prefix}${pattern}`)))
+}
+
+export function detectContinuationIntent(rawPayload: string): ContinuationIntent | null {
+  const trimmed = rawPayload.trim()
+  if (!trimmed || trimmed.length > 100) {
+    return null
+  }
+  const lower = trimmed.toLowerCase()
+  if (isNegatedContinuationPayload(lower)) {
+    return null
+  }
+  const matched = continuationPatterns.find((pattern) => lower.includes(pattern.toLowerCase()) || lower === pattern.toLowerCase())
+  if (!matched) {
+    return null
+  }
+  if (actionHints.some((hint) => lower.includes(hint.toLowerCase()))) {
+    return null
+  }
+  return { rawPayload: trimmed, matchedPattern: matched }
+}
+
 function inferOpenIntent(rawPayload: string, prompt: string, docPaths: string[]): {
   needsClarification: boolean
   clarificationQuestion?: string
@@ -224,6 +292,7 @@ export async function buildWorkflowOpenRequest(payload: string | undefined, work
   const projectContext = trimToEmpty(structured?.projectContext)
     || undefined
   const intent = inferOpenIntent(rawPayload, prompt, docPaths)
+  const continuationIntent = detectContinuationIntent(rawPayload)
 
   const lines: string[] = []
   lines.push("[USER_PROMPT]")
@@ -270,5 +339,6 @@ export async function buildWorkflowOpenRequest(payload: string | undefined, work
     ...(intent.clarificationQuestion ? { clarificationQuestion: intent.clarificationQuestion } : {}),
     ...(intent.clarificationOptions ? { clarificationOptions: intent.clarificationOptions } : {}),
     ...(projectContext ? { projectContext } : {}),
+    ...(continuationIntent ? { continuationIntent } : {}),
   }
 }
