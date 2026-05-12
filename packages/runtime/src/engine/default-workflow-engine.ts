@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import type { Phase } from "../../../core/src/state/phase"
 import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-registry"
+import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
 
 export class DefaultWorkflowEngine implements WorkflowEngine {
@@ -56,6 +57,15 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       develop: "Set ## 状态 to COMPLETED/通过/完成 only after implementation and self-check are done.",
       review: "Set ## 状态 and ## 结论 with explicit pass/fail semantics and include issue severity summary.",
       test: "Set ## 状态 and ## 结论 with explicit pass/fail semantics and include regression/coverage evidence.",
+    }
+
+    const understandingGuidanceByDepth: Record<UnderstandingDepth, string> = {
+      lightweight:
+        "Focus on extracting core intent and explicit request boundary. Do not trace full dependency chains or perform deep codebase analysis unless ambiguity is detected. Keep analysis scoped to what is directly referenced in the user request. Avoid over-analysis of unrelated modules.",
+      standard:
+        "Trace direct dependencies, parent components, and immediate import chains relevant to the change. Identify impact scope on neighboring modules. Verify changes against existing patterns in the codebase. Document which files were examined and why they are relevant.",
+      deep:
+        "Perform comprehensive dependency tracing including parent components, parent routes, stores, composables, services, helpers, shared modules, API contracts, permission boundaries, and cross-module impacts. Document full call chains, state flow, and data dependencies. Map upstream/downstream effects. Record all traced files and justify each inclusion/exclusion in the analysis scope.",
     }
 
     const lines = [
@@ -143,6 +153,25 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
     }
     if (phase === "test") {
       lines.push("[TEST_POLICY] Validate the implementation and review findings. Ensure testing covers both the requested behavior and any affected upstream/downstream files, parent-controlled flows, shared dependencies, and previously working functionality touched by the traced impact boundary. Update the test artifact with executed checks, failures, regression evidence for impacted existing features, coverage summary, and set explicit pass/fail conclusion. Keep section headings unchanged.")
+    }
+
+    if (this.isArtifactPhase(phase) && this.deps.resolvedConfig) {
+      const effectiveDepth = resolveEffectiveUnderstandingDepth({
+        phase: phase as WorkflowConfigPhase,
+        config: this.deps.resolvedConfig,
+      })
+      const depthGuidance = understandingGuidanceByDepth[effectiveDepth]
+      const activeRiskSignals = this.deps.resolvedConfig.riskSignals ?? []
+      lines.push("[UNDERSTANDING_POLICY]")
+      lines.push(`Effective depth: ${effectiveDepth}`)
+      lines.push(depthGuidance)
+      if (activeRiskSignals.length > 0) {
+        lines.push("")
+        lines.push("Available risk signals (reference when assessing task complexity):")
+        for (const signal of activeRiskSignals) {
+          lines.push(`- [${signal.id}] ${signal.description}${signal.triggersDeep ? " (triggers deep)" : ""}`)
+        }
+      }
     }
 
     if ((phase === "spec_refinement" || phase === "plan" || phase === "develop" || phase === "review" || phase === "test") && this.deps.resolvedConfig?.phases?.[phase]?.requiredSkills?.length) {
