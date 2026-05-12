@@ -6,6 +6,7 @@ import type { TransitionAction } from "./transition-action"
 const MAX_SPEC_REFINEMENT_SELF_REPAIR_ATTEMPTS = 1
 const MAX_CONSECUTIVE_FAILURES = 3
 const MAX_REVIEW_OR_TEST_UNKNOWN_DISPATCH_ATTEMPTS = 3
+const MAX_REPEATED_ARTIFACT_SIGNAL_DISPATCH_ATTEMPTS = 3
 
 function getPhaseDispatchAttempts(runtime: PhaseTransitionInput["runtime"], phase: Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test">): number {
   return runtime.phaseDispatchAttempts?.[phase] ?? 0
@@ -24,6 +25,45 @@ function shouldEscalateUnknownConclusion(input: PhaseTransitionInput, phase: "re
     required: true,
     createdAt: new Date().toISOString(),
     ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
+  }
+  return { type: "wait_human", action }
+}
+
+function buildArtifactSignalSignature(input: PhaseTransitionInput, phase: Extract<Phase, "develop" | "review" | "test">): string | null {
+  const signals = [
+    phase,
+    ...input.artifact.missing.map((item) => `missing:${item}`),
+    ...(input.artifact.warnings ?? []).map((item) => `warning:${item}`),
+    `summary:${input.artifact.summary ?? ""}`,
+  ]
+  return signals.length > 1 ? signals.join("|") : null
+}
+
+function shouldEscalateRepeatedArtifactSignals(input: PhaseTransitionInput, phase: Extract<Phase, "develop" | "review" | "test">): TransitionAction | null {
+  const signature = buildArtifactSignalSignature(input, phase)
+  if (!signature || input.runtime.lastArtifactSignalSignature !== signature) {
+    return null
+  }
+
+  if (getPhaseDispatchAttempts(input.runtime, phase) < MAX_REPEATED_ARTIFACT_SIGNAL_DISPATCH_ATTEMPTS) {
+    return null
+  }
+
+  const missingSignals = input.artifact.missing.length > 0
+    ? `Missing signals: ${input.artifact.missing.join(", ")}`
+    : "No blocking signals detected."
+  const warningSignals = input.artifact.warnings && input.artifact.warnings.length > 0
+    ? `Warnings: ${input.artifact.warnings.join(", ")}`
+    : "No warning signals detected."
+
+  const action: HumanAction = {
+    type: "blocked",
+    workflowId: input.workflow.workflowId,
+    phase,
+    reason: `${phase} repeated the same artifact validation signals and needs human decision`,
+    required: true,
+    createdAt: new Date().toISOString(),
+    summary: [input.artifact.summary, missingSignals, warningSignals].filter(Boolean).join(" | "),
   }
   return { type: "wait_human", action }
 }
@@ -143,6 +183,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "review") {
+      if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
+        const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "review")
+        if (repeatedSignalEscalation) {
+          return repeatedSignalEscalation
+        }
+      }
+
       if (artifact.reportStatus === "pass") {
         return {
           type: "advance_phase",
@@ -203,6 +250,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "test") {
+      if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
+        const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "test")
+        if (repeatedSignalEscalation) {
+          return repeatedSignalEscalation
+        }
+      }
+
       if (artifact.valid && artifact.missing.length === 0 && artifact.reportStatus === "pass") {
         return {
           type: "advance_phase",
@@ -243,6 +297,15 @@ export class DefaultPhaseTransition implements PhaseTransition {
           type: "dispatch",
           phase: workflow.phase,
           reason: "Test conclusion is still ambiguous; set an explicit PASS or FAIL conclusion",
+        }
+      }
+    }
+
+    if (workflow.phase === "develop") {
+      if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
+        const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "develop")
+        if (repeatedSignalEscalation) {
+          return repeatedSignalEscalation
         }
       }
     }

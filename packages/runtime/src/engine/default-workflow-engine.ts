@@ -131,6 +131,11 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       lines.push(...artifact.missing.map((item) => `- ${item}`))
     }
 
+    if (artifact?.warnings && artifact.warnings.length > 0) {
+      lines.push("[WARNINGS]")
+      lines.push(...artifact.warnings.map((item) => `- ${item}`))
+    }
+
     if (artifact?.questions && artifact.questions.length > 0) {
       lines.push("[OPEN_QUESTIONS]")
       lines.push(
@@ -296,9 +301,10 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           await this.deps.stateStore.updateRuntime(workflowId, {
             waitingHumanActionId: null,
             consecutiveFailures: 0,
-            phaseDispatchAttempts: {},
-            ...(workflow.phase === "spec_refinement"
-              ? {
+              phaseDispatchAttempts: {},
+              lastArtifactSignalSignature: null,
+              ...(workflow.phase === "spec_refinement"
+                ? {
                   refinementAttempts: 0,
                   refinementLastDispatchSummary: null,
                   refinementEscalationReason: null,
@@ -357,6 +363,14 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
         const runtimePatch = {
           lastContinuationAt: new Date().toISOString(),
           consecutiveFailures: 0,
+          lastArtifactSignalSignature: action.phase === "spec_refinement" || action.phase === "plan" || action.phase === "develop" || action.phase === "review" || action.phase === "test"
+            ? [
+                action.phase,
+                ...artifact.missing.map((item) => `missing:${item}`),
+                ...(artifact.warnings ?? []).map((item) => `warning:${item}`),
+                `summary:${artifact.summary ?? ""}`,
+              ].join("|")
+            : null,
           phaseDispatchAttempts: {
             ...(runtime.phaseDispatchAttempts ?? {}),
             ...(action.phase === "spec_refinement" || action.phase === "plan" || action.phase === "develop" || action.phase === "review" || action.phase === "test"

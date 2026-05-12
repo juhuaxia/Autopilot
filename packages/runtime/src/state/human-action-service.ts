@@ -34,6 +34,7 @@ export class DefaultHumanActionService implements HumanActionService {
       waitingHumanActionId: null,
       refinementAttempts: 0,
       refinementEscalationReason: null,
+      lastArtifactSignalSignature: null,
     })
     await this.eventStore.append({
       workflowId,
@@ -57,6 +58,7 @@ export class DefaultHumanActionService implements HumanActionService {
     })
     await this.stateStore.updateRuntime(workflowId, {
       waitingHumanActionId: null,
+      lastArtifactSignalSignature: null,
     })
     await this.eventStore.append({
       workflowId,
@@ -81,6 +83,7 @@ export class DefaultHumanActionService implements HumanActionService {
     await this.stateStore.updateRuntime(workflowId, {
       waitingHumanActionId: null,
       recoveryState: "idle",
+      lastArtifactSignalSignature: null,
     })
     await this.eventStore.append({
       workflowId,

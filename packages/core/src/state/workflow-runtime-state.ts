@@ -15,4 +15,5 @@ export interface WorkflowRuntimeState {
   refinementEscalationReason?: string | null
   lastContinuationAt?: string
   phaseDispatchAttempts?: PhaseDispatchAttempts
+  lastArtifactSignalSignature?: string | null
 }

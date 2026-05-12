@@ -1222,4 +1222,100 @@ describe("workflow harness MVP", () => {
 
     await rm(baseDir, { recursive: true, force: true })
   })
+
+  it("advances from develop to review when only non-blocking develop sections are missing", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-warning-only"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop warning-only section 不阻塞 phase 推进。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop 缺备注/语言时仍可进入 review。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      [
+        "# 开发报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 修改文件",
+        "src/foo.ts",
+        "",
+        "## 自检结果",
+        "typecheck + build + tests 全通过",
+      ].join("\n"),
+    )
+
+    await harness.tickScheduler.requestTick(workflowId, "develop complete with warnings")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(true)
+    expect(evaluation.missing).toEqual([])
+    expect(evaluation.warnings).toEqual(expect.arrayContaining(["## 配套修改", "## 备注", "## 报告语言"]))
+    expect(workflow?.phase).toBe("review")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stops redispatching develop after repeated blocking artifact signals and waits for human", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-blocking-budget"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop 缺关键 section 时不会无限循环。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop 连续重复缺关键 section 时进入人工处理。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      [
+        "# 开发报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 修改文件",
+        "src/foo.ts",
+      ].join("\n"),
+    )
+
+    await harness.tickScheduler.requestTick(workflowId, "develop unresolved 1")
+    await harness.tickScheduler.requestTick(workflowId, "develop unresolved 2")
+    await harness.tickScheduler.requestTick(workflowId, "develop unresolved 3")
+    await harness.tickScheduler.requestTick(workflowId, "develop unresolved 4")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(workflow?.phase).toBe("develop")
+    expect(workflow?.status).toBe("waiting_human")
+    expect(humanAction?.action.type).toBe("blocked")
+    expect(humanAction?.action.reason).toContain("develop repeated the same artifact validation signals")
+    expect(runtime?.lastArtifactSignalSignature).toContain("missing:## 自检结果")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
 })
