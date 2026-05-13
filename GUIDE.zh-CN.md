@@ -80,6 +80,8 @@ Autopilot 会在关键节点与你交互：
 
 如果评审发现问题，工作流会自动回到实现阶段重做（最多循环 3 次）。如果测试失败，会暂停等你决策。
 
+如果 develop / review / test 阶段看起来已经结束，但当前阶段的 artifact 仍然保持模板态，Autopilot 会在升级为人工阻塞前，额外补发一次 **仅修复 artifact** 的派发。这次派发只允许更新 artifact，不允许继续修改业务代码。
+
 ## 配置说明
 
 Autopilot 使用两个配置文件：
@@ -269,6 +271,44 @@ bun run src/cli.ts autopilot-update
 
 - 只要真的发生了更新，就建议你重启 OpenCode，让内存中的插件缓存重新加载新代码。
 - 如果更新器提示你已经是最新版本，则不需要重启。
+
+## 发布到 npm
+
+这个包已经按 public scoped package 的方式配置。
+
+### 本地发布前检查
+
+```bash
+bun run typecheck
+bun test
+bun run build
+npm pack --dry-run
+```
+
+### 手动发布
+
+```bash
+npm publish --access public
+```
+
+### GitHub Actions 自动发布
+
+给仓库打 `v*` tag 会触发 `.github/workflows/release.yml`，执行：
+
+- typecheck
+- build
+- smoke test
+- 上传 GitHub release 压缩包
+- 如果仓库里配置了 `NPM_TOKEN` secret，则自动发布到 npm
+
+### 还差最后一个前提
+
+如果你想把它真正作为公开开源包发布，还需要补上明确的许可证：
+
+- `package.json` 里的 `license`
+- 仓库根目录下的 `LICENSE`
+
+否则 npm 元数据层面仍会把它视为 proprietary。
 
 ## 常见问题
 

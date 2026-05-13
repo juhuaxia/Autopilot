@@ -82,6 +82,8 @@ You typically only need **3–5 interactions** per request — mostly answering 
 
 If Review finds issues, the workflow loops back to Build automatically (up to 3 times). If Test fails, it pauses for your decision.
 
+If a develop/review/test session appears to finish but the current phase artifact is still unchanged from its template, Autopilot performs one extra **artifact-only repair** dispatch before escalating to human action. That dispatch is limited to updating the artifact only — it must not continue modifying application code.
+
 ## Configuration
 
 Autopilot creates/uses two configuration files:
@@ -271,6 +273,44 @@ If you are chatting with an agent, asking it to **call `autopilot_update`** is m
 
 - After any real update, restart OpenCode so its in-memory plugin cache reloads the new plugin code.
 - If the updater reports that you are already current, no restart is required.
+
+## Publishing to npm
+
+This package is configured for public scoped publishing.
+
+### Local pre-publish verification
+
+```bash
+bun run typecheck
+bun test
+bun run build
+npm pack --dry-run
+```
+
+### Manual publish
+
+```bash
+npm publish --access public
+```
+
+### GitHub Actions release publish
+
+Tagging `v*` runs `.github/workflows/release.yml`, which:
+
+- typechecks
+- builds
+- runs smoke tests
+- uploads the GitHub release tarball
+- publishes to npm when `NPM_TOKEN` is configured in repository secrets
+
+### Remaining requirement
+
+Before calling the package fully public-ready, add an explicit open-source license choice to both:
+
+- `package.json` → `license`
+- repo root → `LICENSE`
+
+Without those, npm will still treat the package as proprietary metadata-wise.
 
 ## Troubleshooting
 
