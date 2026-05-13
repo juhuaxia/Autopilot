@@ -42,3 +42,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/autopilot-release.tar.gz
+
+      - name: Publish to npm
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
