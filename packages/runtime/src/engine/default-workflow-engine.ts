@@ -1,11 +1,38 @@
 import { readFile } from "node:fs/promises"
 import type { Phase } from "../../../core/src/state/phase"
+import { ARTIFACT_REPAIR_REASON_PREFIX } from "../../../core/src/transitions/default-phase-transition"
 import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-registry"
 import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
 
 export class DefaultWorkflowEngine implements WorkflowEngine {
   constructor(private readonly deps: WorkflowEngineDeps) {}
+
+  private buildArtifactRepairPromptLines(args: {
+    phase: Extract<Phase, "develop" | "review" | "test">
+    artifactMissing: string[]
+    artifactPath: string
+    completionPolicy: string
+    currentContent: string
+  }): string[] {
+    const lines: string[] = []
+
+    if (args.artifactMissing.length > 0) {
+      lines.push("[MISSING]")
+      lines.push(...args.artifactMissing.map((item) => `- ${item}`))
+    }
+
+    lines.push("[ARTIFACT_REPAIR_POLICY]")
+    lines.push(`Do not modify application code, routes, APIs, assets, tests, or any non-artifact files in this dispatch. Only repair the ${args.phase} artifact at the target path. Replace template placeholders with actual ${args.phase} evidence/results, and set the required completion or conclusion sections correctly.`)
+    lines.push(`[COMPLETION_POLICY] ${args.completionPolicy}`)
+    lines.push(`[ARTIFACT_PATH] ${args.artifactPath}`)
+    if (args.currentContent) {
+      lines.push("[CURRENT_ARTIFACT]")
+      lines.push(args.currentContent)
+    }
+
+    return lines
+  }
 
   private isArtifactPhase(phase: string): phase is Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test"> {
     return phase === "spec_refinement"
@@ -27,6 +54,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
     if (!this.isArtifactPhase(phase)) {
       return reason
     }
+
+    const isArtifactOnlyRepair = (phase === "develop" || phase === "review" || phase === "test")
+      && reason.startsWith(ARTIFACT_REPAIR_REASON_PREFIX)
 
     const workflow = await this.deps.stateStore.getWorkflow(workflowId)
     const artifact = workflow ? await this.deps.artifactEvaluator.evaluate(workflow) : null
@@ -73,6 +103,19 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       `[GOAL] ${phaseGoalByType[phase]}`,
       `[REASON] ${reason}`,
     ]
+
+    if (isArtifactOnlyRepair) {
+      const repairPhase = phase as Extract<Phase, "develop" | "review" | "test">
+      const repairCompletionPolicy = completionPolicyByPhase[repairPhase] ?? "Set the required completion or conclusion sections correctly."
+      lines.push(...this.buildArtifactRepairPromptLines({
+        phase: repairPhase,
+        artifactMissing: artifact?.missing ?? [],
+        artifactPath: this.deps.workspace.phaseArtifactFile(workflowId, phase),
+        completionPolicy: repairCompletionPolicy,
+        currentContent,
+      }))
+      return lines.join("\n\n")
+    }
 
     if (phase === "plan") {
       try {
@@ -143,7 +186,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       )
     }
 
-    lines.push("[POLICY] Autofill what can be safely inferred. Preserve existing content. Ask humans only for genuine ambiguity. Keep section headings unchanged.")
+    lines.push("[POLICY] Autofill what can be safely inferred. Preserve existing content. Ask humans only for genuine ambiguity. Keep section headings unchanged. Never import or reference icons, images, assets, or components unless you have verified they already exist in the repository. Do not invent import paths, filenames, asset names, or icon exports.")
     if (phase === "spec_refinement") {
       lines.push("[AI_INTAKE_POLICY] Interpret user natural language directly. Extract requirement intent, infer referenced document locations from user wording, and read project documents with your tools before updating artifact sections. Use [DOC_CANDIDATES] as recall-only hints; make final relevance decisions semantically. Do not require user to provide structured JSON.")
     }
@@ -151,10 +194,10 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       lines.push("[PLAN_POLICY] Build a concrete implementation plan from the refinement artifact. First identify the actual feature entry point in the codebase. If behavior is controlled by parent components, parent routes, shared modules, imported functions, composables, stores, services, APIs, or other upstream/downstream dependencies, continue tracing them until the behavior boundary is clear. Replace placeholder text with repository-specific scope, file impact, implementation steps, risk analysis, approval-ready detail, explicit regression considerations, and evidence of dependency/impact tracing where relevant. Keep section headings unchanged.")
     }
     if (phase === "develop") {
-      lines.push("[DEVELOP_POLICY] Execute against the approved plan artifact. Before editing a leaf file, verify whether parent components, entry points, routes, stores, composables, services, helpers, imported functions, or shared modules also participate in the feature logic. If they do, continue tracing and update the implementation scope accordingly. Update code first, then rewrite the develop artifact with actual changed files, supporting changes, self-check evidence, and explicit regression checks for impacted existing behavior. Set ## 状态 to COMPLETED only when implementation and validation are truly done.")
+      lines.push("[DEVELOP_POLICY] Execute against the approved plan artifact. Before editing a leaf file, verify whether parent components, entry points, routes, stores, composables, services, helpers, imported functions, or shared modules also participate in the feature logic. If they do, continue tracing and update the implementation scope accordingly. When icons, images, or other assets are missing, do not create non-existent imports. Either temporarily reuse an existing in-repo asset that actually exists and disclose that substitution in the final report, or ask the user for the correct resource when no acceptable existing asset fits. Update code first, then rewrite the develop artifact with actual changed files, supporting changes, self-check evidence, and explicit regression checks for impacted existing behavior. Set ## 状态 to COMPLETED only when implementation and validation are truly done.")
     }
     if (phase === "review") {
-      lines.push("[REVIEW_POLICY] Review the implementation against the develop artifact and plan intent. Explicitly check whether the implementation missed parent components, parent routes, imported dependencies, shared modules, services, stores, composables, helpers, or other upstream/downstream files that should have been traced. Record concrete findings, severity summary, dependency-tracing gaps if any, regression risk to existing functionality, and set explicit pass/fail conclusion in the review artifact. Keep section headings unchanged.")
+      lines.push("[REVIEW_POLICY] Review the implementation against the develop artifact and plan intent. Explicitly check whether the implementation missed parent components, parent routes, imported dependencies, shared modules, services, stores, composables, helpers, or other upstream/downstream files that should have been traced. Also fail the review if the implementation introduces unverified icon/image/asset/component imports, fabricated resource references, or non-existent export names. Record concrete findings, severity summary, dependency-tracing gaps if any, regression risk to existing functionality, and set explicit pass/fail conclusion in the review artifact. Keep section headings unchanged.")
     }
     if (phase === "test") {
       lines.push("[TEST_POLICY] Validate the implementation and review findings. Ensure testing covers both the requested behavior and any affected upstream/downstream files, parent-controlled flows, shared dependencies, and previously working functionality touched by the traced impact boundary. Update the test artifact with executed checks, failures, regression evidence for impacted existing features, coverage summary, and set explicit pass/fail conclusion. Keep section headings unchanged.")
@@ -256,6 +299,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
             status: "waiting_human",
           })
           const waitRuntimePatch = {
+            blockedFromPhase: null,
             waitingHumanActionId: record.id,
             phaseDispatchAttempts: {
               ...(runtime.phaseDispatchAttempts ?? {}),
@@ -263,6 +307,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
                 ? { [workflow.phase]: 0 }
                 : {}),
             },
+            developArtifactRepairDispatchPending: false,
+            reviewArtifactRepairDispatchPending: false,
+            testArtifactRepairDispatchPending: false,
             ...(workflow.phase === "spec_refinement" && (runtime.refinementAttempts ?? 0) > 0
               ? { refinementEscalationReason: "Autonomous refinement retry budget exhausted" }
               : {}),
@@ -279,6 +326,18 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
               reason: action.action.reason,
             },
           })
+          if (action.action.reason.includes("artifact-only repair attempt")) {
+            await this.deps.eventStore.append({
+              workflowId,
+              type: "artifact.repair_blocked",
+              at: new Date().toISOString(),
+              payload: {
+                phase: action.action.phase,
+                reason: action.action.reason,
+                summary: action.action.summary,
+              },
+            })
+          }
         }
         return
       }
@@ -299,10 +358,14 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
         if (currentHumanAction && currentHumanAction.status !== "consumed") {
           await this.deps.humanActionStore.markConsumed(currentHumanAction.id)
           await this.deps.stateStore.updateRuntime(workflowId, {
+            blockedFromPhase: null,
             waitingHumanActionId: null,
             consecutiveFailures: 0,
               phaseDispatchAttempts: {},
               lastArtifactSignalSignature: null,
+              developArtifactRepairDispatchPending: false,
+              reviewArtifactRepairDispatchPending: false,
+              testArtifactRepairDispatchPending: false,
               ...(workflow.phase === "spec_refinement"
                 ? {
                   refinementAttempts: 0,
@@ -361,6 +424,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           ? (runtime.refinementAttempts ?? 0) + 1
           : 0
         const runtimePatch = {
+          blockedFromPhase: null,
           lastContinuationAt: new Date().toISOString(),
           consecutiveFailures: 0,
           lastArtifactSignalSignature: action.phase === "spec_refinement" || action.phase === "plan" || action.phase === "develop" || action.phase === "review" || action.phase === "test"
@@ -377,6 +441,15 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
               ? { [action.phase]: (runtime.phaseDispatchAttempts?.[action.phase] ?? 0) + 1 }
               : {}),
           },
+          developArtifactRepairDispatchPending: action.phase === "develop"
+            ? action.reason.startsWith(ARTIFACT_REPAIR_REASON_PREFIX)
+            : false,
+          reviewArtifactRepairDispatchPending: action.phase === "review"
+            ? action.reason.startsWith(ARTIFACT_REPAIR_REASON_PREFIX)
+            : false,
+          testArtifactRepairDispatchPending: action.phase === "test"
+            ? action.reason.startsWith(ARTIFACT_REPAIR_REASON_PREFIX)
+            : false,
           ...(action.phase === "spec_refinement"
             ? {
                 refinementAttempts: nextAttempt,
@@ -415,6 +488,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       case "recover": {
         const disposition = this.deps.recoveryClassifier.classify(action.reason)
         await this.deps.stateStore.updateRuntime(workflowId, {
+          blockedFromPhase: workflow.phase === "blocked"
+            ? runtime.blockedFromPhase ?? null
+            : workflow.phase,
           recoveryState: disposition === "terminal" ? "idle" : "recovering",
           consecutiveFailures: runtime.consecutiveFailures + 1,
         })

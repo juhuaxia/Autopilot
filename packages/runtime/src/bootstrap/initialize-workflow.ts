@@ -32,6 +32,7 @@ export async function initializeWorkflow(args: {
   const runtime: WorkflowRuntimeState = {
     workflowId,
     preferredForegroundSessionId: null,
+    blockedFromPhase: null,
     recoveryState: "idle",
     waitingHumanActionId: null,
     consecutiveFailures: 0,
@@ -40,6 +41,9 @@ export async function initializeWorkflow(args: {
     refinementEscalationReason: null,
     phaseDispatchAttempts: {},
     lastArtifactSignalSignature: null,
+    developArtifactRepairDispatchPending: false,
+    reviewArtifactRepairDispatchPending: false,
+    testArtifactRepairDispatchPending: false,
   }
 
   await stateStore.saveWorkflow(workflow)

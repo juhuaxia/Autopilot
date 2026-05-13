@@ -31,10 +31,16 @@ export class DefaultHumanActionService implements HumanActionService {
       status: "in_progress",
     })
     await this.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: null,
       waitingHumanActionId: null,
+      consecutiveFailures: 0,
+      recoveryState: "idle",
       refinementAttempts: 0,
       refinementEscalationReason: null,
       lastArtifactSignalSignature: null,
+      developArtifactRepairDispatchPending: false,
+      reviewArtifactRepairDispatchPending: false,
+      testArtifactRepairDispatchPending: false,
     })
     await this.eventStore.append({
       workflowId,
@@ -57,8 +63,14 @@ export class DefaultHumanActionService implements HumanActionService {
       status: "pending",
     })
     await this.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: null,
       waitingHumanActionId: null,
+      consecutiveFailures: 0,
+      recoveryState: "idle",
       lastArtifactSignalSignature: null,
+      developArtifactRepairDispatchPending: false,
+      reviewArtifactRepairDispatchPending: false,
+      testArtifactRepairDispatchPending: false,
     })
     await this.eventStore.append({
       workflowId,
@@ -70,6 +82,8 @@ export class DefaultHumanActionService implements HumanActionService {
   }
 
   async resume(workflowId: string): Promise<void> {
+    const workflow = await this.stateStore.getWorkflow(workflowId)
+    const runtime = await this.stateStore.getRuntime(workflowId)
     const current = await this.humanActionStore.getCurrent(workflowId)
     if (current) {
       await this.humanActionStore.markResponded(current.id)
@@ -77,13 +91,21 @@ export class DefaultHumanActionService implements HumanActionService {
     }
 
     await this.stateStore.updateWorkflow(workflowId, {
+      ...(workflow?.phase === "blocked" && runtime?.blockedFromPhase
+        ? { phase: runtime.blockedFromPhase }
+        : {}),
       status: "pending",
       blockReason: null,
     })
     await this.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: null,
       waitingHumanActionId: null,
       recoveryState: "idle",
+      consecutiveFailures: 0,
       lastArtifactSignalSignature: null,
+      developArtifactRepairDispatchPending: false,
+      reviewArtifactRepairDispatchPending: false,
+      testArtifactRepairDispatchPending: false,
     })
     await this.eventStore.append({
       workflowId,

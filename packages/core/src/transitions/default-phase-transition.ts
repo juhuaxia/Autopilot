@@ -8,8 +8,101 @@ const MAX_CONSECUTIVE_FAILURES = 3
 const MAX_REVIEW_OR_TEST_UNKNOWN_DISPATCH_ATTEMPTS = 3
 const MAX_REPEATED_ARTIFACT_SIGNAL_DISPATCH_ATTEMPTS = 3
 
+export const ARTIFACT_REPAIR_REASON_PREFIX = "Artifact-only repair:"
+
 function getPhaseDispatchAttempts(runtime: PhaseTransitionInput["runtime"], phase: Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test">): number {
   return runtime.phaseDispatchAttempts?.[phase] ?? 0
+}
+
+function buildBlockedAction(args: {
+  workflowId: string
+  phase: Phase
+  reason: string
+  summary?: string
+}): TransitionAction {
+  return {
+    type: "wait_human",
+    action: {
+      type: "blocked",
+      workflowId: args.workflowId,
+      phase: args.phase,
+      reason: args.reason,
+      required: true,
+      createdAt: new Date().toISOString(),
+      ...(args.summary ? { summary: args.summary } : {}),
+    },
+  }
+}
+
+function isArtifactRepairPending(
+  runtime: PhaseTransitionInput["runtime"],
+  phase: Extract<Phase, "develop" | "review" | "test">,
+): boolean {
+  if (phase === "develop") {
+    return runtime.developArtifactRepairDispatchPending === true
+  }
+  if (phase === "review") {
+    return runtime.reviewArtifactRepairDispatchPending === true
+  }
+  return runtime.testArtifactRepairDispatchPending === true
+}
+
+function buildArtifactOnlyRepairReason(phase: Extract<Phase, "develop" | "review" | "test">): string {
+  const artifactName = `${phase}.md`
+  return `${ARTIFACT_REPAIR_REASON_PREFIX} ${phase} artifact still matches its template. Do not modify code. Only update ${artifactName} with actual ${phase} results, replace template placeholders, and set the required completion/conclusion sections correctly.`
+}
+
+function buildRepeatedSignalBlockedDiagnostic(input: PhaseTransitionInput, phase: Extract<Phase, "develop" | "review" | "test">): {
+  reason: string
+  summary: string
+} {
+  const missingSignals = input.artifact.missing.length > 0
+    ? `Missing signals: ${input.artifact.missing.join(", ")}`
+    : "No blocking signals detected."
+  const warningSignals = input.artifact.warnings && input.artifact.warnings.length > 0
+    ? `Warnings: ${input.artifact.warnings.join(", ")}`
+    : "No warning signals detected."
+
+  if (input.artifact.missing.includes("artifact_unchanged_from_template")) {
+    const artifactName = `${phase}.md`
+    return {
+      reason: `${phase} artifact stayed at template/stale state after the artifact-only repair attempt and now needs human decision. Missing sections/signals: ${input.artifact.missing.join(", ")}. Suggested recovery: inspect the existing work, then ask the agent to update only ${artifactName} or manually fix the artifact before resume.`,
+      summary: [
+        input.artifact.summary,
+        `The ${phase} artifact still looks unfinished or template-derived.`,
+        `Recommended next step: repair ${artifactName} before resuming the workflow.`,
+        missingSignals,
+        warningSignals,
+      ].filter(Boolean).join(" | "),
+    }
+  }
+
+  return {
+    reason: `${phase} repeated the same artifact validation signals and needs human decision.${input.artifact.missing.length > 0 ? ` Missing sections/signals: ${input.artifact.missing.join(", ")}.` : ""}`,
+    summary: [input.artifact.summary, missingSignals, warningSignals].filter(Boolean).join(" | "),
+  }
+}
+
+function buildUnknownConclusionBlockedDiagnostic(input: PhaseTransitionInput, phase: "review" | "test"): {
+  reason: string
+  summary?: string
+} {
+  return {
+    reason: `${phase} exceeded dispatch retry budget and needs human decision`,
+    ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
+  }
+}
+
+function buildReportFailureBlockedDiagnostic(input: PhaseTransitionInput, phase: "review" | "test"): {
+  reason: string
+  summary?: string
+} {
+  return {
+    reason: phase === "review"
+      ? "Review failed without blocker severity and needs human decision"
+      : "Test failed and needs human decision",
+    ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
+  }
 }
 
 function shouldEscalateUnknownConclusion(input: PhaseTransitionInput, phase: "review" | "test"): TransitionAction | null {
@@ -17,16 +110,13 @@ function shouldEscalateUnknownConclusion(input: PhaseTransitionInput, phase: "re
     return null
   }
 
-  const action: HumanAction = {
-    type: "blocked",
+  const diagnostic = buildUnknownConclusionBlockedDiagnostic(input, phase)
+  return buildBlockedAction({
     workflowId: input.workflow.workflowId,
     phase,
-    reason: `${phase} exceeded dispatch retry budget and needs human decision`,
-    required: true,
-    createdAt: new Date().toISOString(),
-    ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
-  }
-  return { type: "wait_human", action }
+    reason: diagnostic.reason,
+    ...(diagnostic.summary ? { summary: diagnostic.summary } : {}),
+  })
 }
 
 function buildArtifactSignalSignature(input: PhaseTransitionInput, phase: Extract<Phase, "develop" | "review" | "test">): string | null {
@@ -49,23 +139,13 @@ function shouldEscalateRepeatedArtifactSignals(input: PhaseTransitionInput, phas
     return null
   }
 
-  const missingSignals = input.artifact.missing.length > 0
-    ? `Missing signals: ${input.artifact.missing.join(", ")}`
-    : "No blocking signals detected."
-  const warningSignals = input.artifact.warnings && input.artifact.warnings.length > 0
-    ? `Warnings: ${input.artifact.warnings.join(", ")}`
-    : "No warning signals detected."
-
-  const action: HumanAction = {
-    type: "blocked",
+  const diagnostic = buildRepeatedSignalBlockedDiagnostic(input, phase)
+  return buildBlockedAction({
     workflowId: input.workflow.workflowId,
     phase,
-    reason: `${phase} repeated the same artifact validation signals and needs human decision`,
-    required: true,
-    createdAt: new Date().toISOString(),
-    summary: [input.artifact.summary, missingSignals, warningSignals].filter(Boolean).join(" | "),
-  }
-  return { type: "wait_human", action }
+    reason: diagnostic.reason,
+    ...(diagnostic.summary ? { summary: diagnostic.summary } : {}),
+  })
 }
 
 function nextPhaseFor(current: Phase): Phase | null {
@@ -186,6 +266,16 @@ export class DefaultPhaseTransition implements PhaseTransition {
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "review")
         if (repeatedSignalEscalation) {
+          if (
+            !isArtifactRepairPending(input.runtime, "review")
+            && input.artifact.missing.includes("artifact_unchanged_from_template")
+          ) {
+            return {
+              type: "dispatch",
+              phase: workflow.phase,
+              reason: buildArtifactOnlyRepairReason("review"),
+            }
+          }
           return repeatedSignalEscalation
         }
       }
@@ -214,18 +304,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
           }
         }
 
-        const action: HumanAction = {
-          type: "blocked",
+        const diagnostic = buildReportFailureBlockedDiagnostic(input, "review")
+        return buildBlockedAction({
           workflowId: workflow.workflowId,
           phase: workflow.phase,
-          reason: "Review failed without blocker severity and needs human decision",
-          required: true,
-          createdAt: new Date().toISOString(),
-        }
-        if (artifact.summary) {
-          action.summary = artifact.summary
-        }
-        return { type: "wait_human", action }
+          reason: diagnostic.reason,
+          ...(diagnostic.summary ? { summary: diagnostic.summary } : {}),
+        })
       }
 
       if (workflow.status === "pending") {
@@ -253,6 +338,16 @@ export class DefaultPhaseTransition implements PhaseTransition {
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "test")
         if (repeatedSignalEscalation) {
+          if (
+            !isArtifactRepairPending(input.runtime, "test")
+            && input.artifact.missing.includes("artifact_unchanged_from_template")
+          ) {
+            return {
+              type: "dispatch",
+              phase: workflow.phase,
+              reason: buildArtifactOnlyRepairReason("test"),
+            }
+          }
           return repeatedSignalEscalation
         }
       }
@@ -266,18 +361,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
-        const action: HumanAction = {
-          type: "blocked",
+        const diagnostic = buildReportFailureBlockedDiagnostic(input, "test")
+        return buildBlockedAction({
           workflowId: workflow.workflowId,
           phase: workflow.phase,
-          reason: "Test failed and needs human decision",
-          required: true,
-          createdAt: new Date().toISOString(),
-        }
-        if (artifact.summary) {
-          action.summary = artifact.summary
-        }
-        return { type: "wait_human", action }
+          reason: diagnostic.reason,
+          ...(diagnostic.summary ? { summary: diagnostic.summary } : {}),
+        })
       }
 
       if (workflow.status === "pending") {
@@ -305,6 +395,16 @@ export class DefaultPhaseTransition implements PhaseTransition {
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "develop")
         if (repeatedSignalEscalation) {
+          if (
+            !isArtifactRepairPending(input.runtime, "develop")
+            && input.artifact.missing.includes("artifact_unchanged_from_template")
+          ) {
+            return {
+              type: "dispatch",
+              phase: workflow.phase,
+              reason: buildArtifactOnlyRepairReason("develop"),
+            }
+          }
           return repeatedSignalEscalation
         }
       }

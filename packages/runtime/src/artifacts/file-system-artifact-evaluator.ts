@@ -17,6 +17,7 @@ interface PhaseArtifactState {
   requiresApproval?: boolean
   reportStatus?: "pass" | "fail" | "unknown"
   hasBlockingSeverity?: boolean
+  templateFingerprint?: string
 }
 
 type ArtifactStateFile = Partial<Record<Phase, PhaseArtifactState>>
@@ -84,6 +85,13 @@ const SPEC_REFINEMENT_QUESTION_BLUEPRINTS: SpecRefinementQuestionBlueprint[] = [
 ]
 
 const unresolvedMarkers = ["待确认", "待补充", "待判定", "待 ai", "tbd", "todo", "unknown", "自行补充", "按文档内容", "按照文档内容", "参考文档"]
+
+const buildTemplateFingerprint = (content: string): string => JSON.stringify(
+  content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0),
+)
 
 const SECTION_RULES: Record<Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test">, {
   title: string
@@ -709,49 +717,55 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
 
     if (phase === "develop") {
       const planContent = await this.readPhaseArtifact(workflowId, "plan")
+      const developTemplate = this.buildDevelopArtifactFromPlanContent(planContent)
       await this.updatePhaseState(workflowId, "develop", {
         valid: false,
         readyForNextPhase: false,
         summary: "Development work is not complete yet",
+        templateFingerprint: buildTemplateFingerprint(developTemplate),
       })
       await this.writePhaseArtifact(
         workflowId,
         "develop",
-        this.buildDevelopArtifactFromPlanContent(planContent),
+        developTemplate,
       )
       return
     }
 
     if (phase === "review") {
       const developContent = await this.readPhaseArtifact(workflowId, "develop")
+      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent)
       await this.updatePhaseState(workflowId, "review", {
         valid: true,
         readyForNextPhase: false,
         summary: "Review report pending routing",
         reportStatus: "unknown",
         hasBlockingSeverity: false,
+        templateFingerprint: buildTemplateFingerprint(reviewTemplate),
       })
       await this.writePhaseArtifact(
         workflowId,
         "review",
-        this.buildReviewArtifactFromDevelopContent(developContent),
+        reviewTemplate,
       )
       return
     }
 
     if (phase === "test") {
       const reviewContent = await this.readPhaseArtifact(workflowId, "review")
+      const testTemplate = this.buildTestArtifactFromReviewContent(reviewContent)
       await this.updatePhaseState(workflowId, "test", {
         valid: true,
         readyForNextPhase: false,
         summary: "Test report pending routing",
         reportStatus: "unknown",
         hasBlockingSeverity: false,
+        templateFingerprint: buildTemplateFingerprint(testTemplate),
       })
       await this.writePhaseArtifact(
         workflowId,
         "test",
-        this.buildTestArtifactFromReviewContent(reviewContent),
+        testTemplate,
       )
       return
     }
@@ -988,6 +1002,20 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     let content = await this.readPhaseArtifact(state.workflowId, state.phase)
     let fromWorkspace = this.evaluatePhaseContent(state.phase, content)
 
+    const hasUnchangedTemplateFingerprint = (state.phase === "develop" || state.phase === "review" || state.phase === "test")
+      && typeof current.templateFingerprint === "string"
+      && current.templateFingerprint === buildTemplateFingerprint(content)
+
+    if (hasUnchangedTemplateFingerprint && !fromWorkspace.missing.includes("artifact_unchanged_from_template")) {
+      fromWorkspace = {
+        ...fromWorkspace,
+        valid: false,
+        readyForNextPhase: false,
+        missing: [...fromWorkspace.missing, "artifact_unchanged_from_template"],
+        summary: "开发报告仍包含模板占位内容，未满足完成条件",
+      }
+    }
+
     if (state.phase === "spec_refinement" && fromWorkspace.questions?.some((question) => question.canAutoResolve)) {
       const initialRequest = current.initialRequest ?? this.normalizeUserRequest(
         this.parseAnswerFromArtifact(content, "## 原始需求摘要") ?? undefined,
@@ -997,6 +1025,17 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         await this.writePhaseArtifact(state.workflowId, "spec_refinement", autoFilledContent)
         content = autoFilledContent
         fromWorkspace = this.evaluatePhaseContent(state.phase, content)
+        const refreshedHasUnchangedTemplateFingerprint = typeof current.templateFingerprint === "string"
+          && current.templateFingerprint === buildTemplateFingerprint(content)
+        if (refreshedHasUnchangedTemplateFingerprint && !fromWorkspace.missing.includes("artifact_unchanged_from_template")) {
+          fromWorkspace = {
+            ...fromWorkspace,
+            valid: false,
+            readyForNextPhase: false,
+            missing: [...fromWorkspace.missing, "artifact_unchanged_from_template"],
+            summary: "开发报告仍包含模板占位内容，未满足完成条件",
+          }
+        }
         const phasePatch: Partial<PhaseArtifactState> = {
           valid: fromWorkspace.valid ?? false,
           readyForNextPhase: fromWorkspace.readyForNextPhase ?? false,

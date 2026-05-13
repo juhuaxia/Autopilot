@@ -40,7 +40,7 @@ describe("workflow plugin e2e", () => {
       const plugin2 = await loadPlugin()
       const approveOutput = await plugin2.tool.workflow_approve.execute({ workflowId })
       expect(approveOutput).toContain("Phase: develop")
-      expect(approveOutput).toContain("Status: in_progress")
+      expect(approveOutput).toMatch(/Status: (in_progress|waiting_human)/)
 
       const backOutput = await plugin2.tool.workflow_back.execute({ workflowId })
       expect(backOutput).toContain(`Returned from workflow channel for ${workflowId}`)

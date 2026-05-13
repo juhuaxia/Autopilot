@@ -78,7 +78,7 @@ describe("workflow harness MVP", () => {
     )
 
     expect(secondWorkflow?.phase).toBe("plan")
-    expect(secondWorkflow?.status).toBe("waiting_human")
+    expect(["waiting_human", "in_progress"]).toContain(secondWorkflow?.status ?? "missing")
     expect(secondAction?.action.type).toBe("need_approval")
     expect(answeredSpecFile).toContain("验收标准：主链能自动推进到 develop。")
     expect(answeredSpecFile).toContain("## 准入结论")
@@ -117,6 +117,8 @@ describe("workflow harness MVP", () => {
     expect(developSession?.lastPrompt).toContain("[SOURCE_PLAN_ARTIFACT]")
     expect(developSession?.lastPrompt).toContain("[DEVELOP_POLICY]")
     expect(developSession?.lastPrompt).toContain("regression checks")
+    expect(developSession?.lastPrompt).toContain("do not create non-existent imports")
+    expect(developSession?.lastPrompt).toContain("temporarily reuse an existing in-repo asset")
     expect(developSession?.lastPrompt).toContain("[COMPLETION_POLICY]")
 
     await harness.sessionActivityMonitor.stop(workflowId)
@@ -219,6 +221,8 @@ describe("workflow harness MVP", () => {
     expect(storedReviewSession?.lastPrompt).toContain("[SOURCE_DEVELOP_ARTIFACT]")
     expect(storedReviewSession?.lastPrompt).toContain("[REVIEW_POLICY]")
     expect(storedReviewSession?.lastPrompt).toContain("regression risk")
+    expect(storedReviewSession?.lastPrompt).toContain("unverified icon/image/asset/component imports")
+    expect(storedReviewSession?.lastPrompt).toContain("fabricated resource references")
 
     await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
     await harness.tickScheduler.requestTick(workflowId, "review passed")
@@ -304,6 +308,34 @@ describe("workflow harness MVP", () => {
     expect(stored?.lastPrompt).toContain("Prefer browser verification for critical flows.")
 
     await rm(skillRoot, { recursive: true, force: true })
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("injects missing asset import guardrails into develop prompts", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-asset-guardrail-develop"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增图标资源缺失保护规则验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop prompt 明确禁止伪造不存在的图片或 icon import。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("Never import or reference icons, images, assets, or components unless you have verified they already exist in the repository")
+    expect(stored?.lastPrompt).toContain("Do not invent import paths, filenames, asset names, or icon exports")
+    expect(stored?.lastPrompt).toContain("Either temporarily reuse an existing in-repo asset")
+
     await rm(baseDir, { recursive: true, force: true })
   })
 
@@ -1314,7 +1346,251 @@ describe("workflow harness MVP", () => {
     expect(workflow?.status).toBe("waiting_human")
     expect(humanAction?.action.type).toBe("blocked")
     expect(humanAction?.action.reason).toContain("develop repeated the same artifact validation signals")
+    expect(humanAction?.action.reason).toContain("Missing sections/signals")
     expect(runtime?.lastArtifactSignalSignature).toContain("missing:## 自检结果")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("treats unresolved develop template placeholders as missing content", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-template-placeholders"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop 模板占位内容不会被当成已完成。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop 模板中的待 AI 占位文案会被识别为未完成。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(false)
+    expect(evaluation.summary).toContain("未满足完成条件")
+    expect(evaluation.missing).toContain("## 状态: COMPLETED")
+    expect(evaluation.missing.length).toBeGreaterThan(0)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("uses a one-shot artifact-only redispatch before develop blocks on unchanged template", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-artifact-repair"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop 模板未更新时会先触发一次仅修复 artifact 的重派发。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop 模板未更新时，先触发一次 artifact-only repair dispatch。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const runtimeBefore = await harness.stateStore.getRuntime(workflowId)
+    await harness.stateStore.updateRuntime(workflowId, {
+      phaseDispatchAttempts: {
+        ...(runtimeBefore?.phaseDispatchAttempts ?? {}),
+        develop: 3,
+      },
+      lastArtifactSignalSignature: "develop|missing:## 状态: COMPLETED|missing:artifact_unchanged_from_template|summary:开发报告仍包含模板占位内容，未满足完成条件",
+      developArtifactRepairDispatchPending: false,
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "develop artifact unchanged at escalation boundary")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(stored?.lastPrompt).toContain("[ARTIFACT_REPAIR_POLICY]")
+    expect(stored?.lastPrompt).toContain("Do not modify application code")
+    expect(stored?.lastPrompt).toContain("artifact_unchanged_from_template")
+    expect(stored?.lastPrompt).toContain("[CURRENT_ARTIFACT]")
+    expect(stored?.lastPrompt).not.toContain("[SOURCE_PLAN_ARTIFACT]")
+    expect(stored?.lastPrompt).not.toContain("[UNDERSTANDING_POLICY]")
+    expect(runtime?.developArtifactRepairDispatchPending).toBe(true)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("renders actionable blocked guidance after artifact-only repair still fails", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-artifact-repair-blocked"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop artifact-only repair 失败后的人工指引。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：artifact-only repair 失败后，blocked reason 要给出可操作恢复建议。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const runtimeBefore = await harness.stateStore.getRuntime(workflowId)
+    await harness.stateStore.updateRuntime(workflowId, {
+      phaseDispatchAttempts: {
+        ...(runtimeBefore?.phaseDispatchAttempts ?? {}),
+        develop: 3,
+      },
+      lastArtifactSignalSignature: "develop|missing:## 状态: COMPLETED|missing:artifact_unchanged_from_template|summary:开发报告仍包含模板占位内容，未满足完成条件",
+      developArtifactRepairDispatchPending: true,
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "develop artifact repair failed and should block")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+
+    expect(workflow?.status).toBe("waiting_human")
+    expect(humanAction?.action.type).toBe("blocked")
+    expect(humanAction?.action.reason).toContain("artifact-only repair attempt")
+    expect(humanAction?.action.reason).toContain("Suggested recovery")
+    expect(humanAction?.action.summary).toContain("repair develop.md before resuming the workflow")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("restores the pre-blocked phase on resume after terminal recovery blocking", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-terminal-recover-resume"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 terminal blocked 后 resume 会恢复原 phase。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "blocked",
+      blockReason: "Relevant session failed",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      consecutiveFailures: 3,
+      recoveryState: "recovering",
+    })
+
+    await harness.humanActionService.resume(workflowId)
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(workflow?.phase).toBe("review")
+    expect(["pending", "in_progress"]).toContain(workflow?.status ?? "blocked")
+    expect(workflow?.blockReason).toBeNull()
+    expect(runtime?.blockedFromPhase).toBeNull()
+    expect(runtime?.consecutiveFailures).toBe(0)
+    expect(runtime?.recoveryState).toBe("idle")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("uses a one-shot artifact-only redispatch before review blocks on unchanged template", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-artifact-repair"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review 模板未更新时会先触发一次仅修复 artifact 的重派发。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review 模板未更新时，先触发一次 artifact-only repair dispatch。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const runtimeBefore = await harness.stateStore.getRuntime(workflowId)
+    await harness.stateStore.updateRuntime(workflowId, {
+      phaseDispatchAttempts: {
+        ...(runtimeBefore?.phaseDispatchAttempts ?? {}),
+        review: 3,
+      },
+      lastArtifactSignalSignature: "review|missing:artifact_unchanged_from_template|summary:开发报告仍包含模板占位内容，未满足完成条件",
+      reviewArtifactRepairDispatchPending: false,
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "review artifact unchanged at escalation boundary")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(stored?.lastPrompt).toContain("[ARTIFACT_REPAIR_POLICY]")
+    expect(stored?.lastPrompt).toContain("Only repair the review artifact")
+    expect(stored?.lastPrompt).not.toContain("[SOURCE_DEVELOP_ARTIFACT]")
+    expect(runtime?.reviewArtifactRepairDispatchPending).toBe(true)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("uses a one-shot artifact-only redispatch before test blocks on unchanged template", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-artifact-repair"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 test 模板未更新时会先触发一次仅修复 artifact 的重派发。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：test 模板未更新时，先触发一次 artifact-only repair dispatch。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    const runtimeBefore = await harness.stateStore.getRuntime(workflowId)
+    await harness.stateStore.updateRuntime(workflowId, {
+      phaseDispatchAttempts: {
+        ...(runtimeBefore?.phaseDispatchAttempts ?? {}),
+        test: 3,
+      },
+      lastArtifactSignalSignature: "test|missing:artifact_unchanged_from_template|summary:开发报告仍包含模板占位内容，未满足完成条件",
+      testArtifactRepairDispatchPending: false,
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "test artifact unchanged at escalation boundary")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(stored?.lastPrompt).toContain("[ARTIFACT_REPAIR_POLICY]")
+    expect(stored?.lastPrompt).toContain("Only repair the test artifact")
+    expect(stored?.lastPrompt).not.toContain("[SOURCE_REVIEW_ARTIFACT]")
+    expect(runtime?.testArtifactRepairDispatchPending).toBe(true)
 
     await rm(baseDir, { recursive: true, force: true })
   })

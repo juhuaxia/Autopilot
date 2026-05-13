@@ -7,6 +7,7 @@ export interface WorkflowRuntimeState {
   preferredForegroundSessionId?: string | null
   leaseOwner?: string
   leaseExpiresAt?: string
+  blockedFromPhase?: Exclude<import("./phase").Phase, "blocked"> | null
   recoveryState: RecoveryState
   waitingHumanActionId?: string | null
   consecutiveFailures: number
@@ -16,4 +17,7 @@ export interface WorkflowRuntimeState {
   lastContinuationAt?: string
   phaseDispatchAttempts?: PhaseDispatchAttempts
   lastArtifactSignalSignature?: string | null
+  developArtifactRepairDispatchPending?: boolean
+  reviewArtifactRepairDispatchPending?: boolean
+  testArtifactRepairDispatchPending?: boolean
 }
