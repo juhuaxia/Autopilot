@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 const releaseDir = join(process.cwd(), "release")
@@ -6,6 +6,7 @@ const bundleDir = join(releaseDir, "autopilot")
 async function main(): Promise<void> {
   await rm(releaseDir, { recursive: true, force: true })
   await mkdir(bundleDir, { recursive: true })
+  const packageMetadata = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as { version?: unknown }
 
   const result = await Bun.build({
     entrypoints: [join(process.cwd(), "plugin.ts")],
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
 
   const releaseMetadata = {
     name: "autopilot",
+    version: typeof packageMetadata.version === "string" ? packageMetadata.version : null,
     pluginEntry: "plugin.js",
     installedAt: new Date().toISOString(),
   }

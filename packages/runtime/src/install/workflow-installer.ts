@@ -15,13 +15,13 @@ export type WorkflowInstallOptions = {
   pluginEntryFile?: string
 }
 
-function stripJsonComments(input: string): string {
+export function stripJsonComments(input: string): string {
   return input
     .replace(/^\s*\/\/.*$/gm, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
 }
 
-async function resolveOpencodeConfigFile(opencodeConfigDir: string): Promise<{ filePath: string; warnings: string[] }> {
+export async function resolveOpencodeConfigFile(opencodeConfigDir: string): Promise<{ filePath: string; warnings: string[] }> {
   const jsonFile = join(opencodeConfigDir, "opencode.json")
   const jsoncFile = join(opencodeConfigDir, "opencode.jsonc")
   const hasJson = await fileExists(jsonFile)

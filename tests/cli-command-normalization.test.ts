@@ -21,6 +21,8 @@ describe("workflow channel command aliases", () => {
         return "doctor"
       case "workflow-install":
         return "install"
+      case "autopilot-update":
+        return "update"
       default:
         return command
     }
@@ -44,5 +46,9 @@ describe("workflow channel command aliases", () => {
 
   it("maps workflow-install to install", () => {
     expect(normalizeCommand("workflow-install")).toBe("install")
+  })
+
+  it("maps autopilot-update to update", () => {
+    expect(normalizeCommand("autopilot-update")).toBe("update")
   })
 })

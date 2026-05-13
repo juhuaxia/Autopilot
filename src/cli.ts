@@ -2,14 +2,16 @@ import { join } from "node:path"
 import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
 import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize-workflow"
 import { DefaultWorkflowCommandRunner } from "../packages/runtime/src/commands/default-workflow-command-runner"
-import { formatWorkflowDoctorResult, formatWorkflowInstallResult } from "../packages/runtime/src/diagnostics/workflow-diagnostics-format"
+import { formatWorkflowDoctorResult, formatWorkflowInstallResult, formatWorkflowUpdateResult } from "../packages/runtime/src/diagnostics/workflow-diagnostics-format"
+import { runAutopilotUpdate } from "../packages/runtime/src/install/autopilot-updater"
 import { runWorkflowDoctor } from "../packages/runtime/src/diagnostics/workflow-doctor"
 import { runWorkflowInstall } from "../packages/runtime/src/install/workflow-installer"
 import { renderHumanActionBlock } from "../packages/runtime/src/presentation/human-action-renderer"
 import { renderWatchFrame } from "../packages/runtime/src/presentation/watch-renderer"
+import { DefaultWorkflowWorkspace } from "../packages/runtime/src/workspace/workflow-workspace"
 import { homedir } from "node:os"
 
-const WORKFLOW_COMMANDS = new Set([
+const WORKFLOW_CHANNEL_COMMANDS = new Set([
   "workflow-open",
   "workflow-attach",
   "workflow-status",
@@ -17,15 +19,9 @@ const WORKFLOW_COMMANDS = new Set([
   "workflow-approve",
   "workflow-resume",
   "workflow-back",
-  "workflow-doctor",
-  "workflow-install",
 ])
 
 function normalizeCommand(command: string): string {
-  if (!WORKFLOW_COMMANDS.has(command)) {
-    return command
-  }
-
   switch (command) {
     case "workflow-open":
       return "start"
@@ -45,6 +41,8 @@ function normalizeCommand(command: string): string {
       return "doctor"
     case "workflow-install":
       return "install"
+    case "autopilot-update":
+      return "update"
     default:
       return command
   }
@@ -104,18 +102,9 @@ async function watchWorkflow(harness: Awaited<ReturnType<typeof createHarness>>,
 async function main(): Promise<void> {
   const [, , command, workflowId, payload] = process.argv
   const normalizedCommand = command ? normalizeCommand(command) : command
-  const baseDir = join(process.cwd(), ".workflow-harness")
-  const harnessOptions = {
-    ...(process.env.OPENCODE_BASE_URL ? { opencodeBaseUrl: process.env.OPENCODE_BASE_URL } : {}),
-    ...(process.env.OPENCODE_SERVER_PASSWORD
-      ? { opencodePassword: process.env.OPENCODE_SERVER_PASSWORD }
-      : {}),
-  }
-  const harness = await createHarness(baseDir, harnessOptions)
-  const commandRunner = new DefaultWorkflowCommandRunner()
 
   if (!normalizedCommand) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|install|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "install") {
@@ -128,13 +117,33 @@ async function main(): Promise<void> {
   }
 
   if (normalizedCommand === "doctor") {
-    const result = await runWorkflowDoctor(harness.workspace)
+    const baseDir = join(process.cwd(), ".workflow-harness")
+    const result = await runWorkflowDoctor(new DefaultWorkflowWorkspace(baseDir))
     console.log(formatWorkflowDoctorResult(result))
     return
   }
 
+  if (normalizedCommand === "update") {
+    const result = await runAutopilotUpdate({
+      cwd: process.cwd(),
+      homeDir: homedir(),
+    })
+    console.log(formatWorkflowUpdateResult(result))
+    return
+  }
+
+  const baseDir = join(process.cwd(), ".workflow-harness")
+  const harnessOptions = {
+    ...(process.env.OPENCODE_BASE_URL ? { opencodeBaseUrl: process.env.OPENCODE_BASE_URL } : {}),
+    ...(process.env.OPENCODE_SERVER_PASSWORD
+      ? { opencodePassword: process.env.OPENCODE_SERVER_PASSWORD }
+      : {}),
+  }
+  const harness = await createHarness(baseDir, harnessOptions)
+  const commandRunner = new DefaultWorkflowCommandRunner()
+
   if (!workflowId) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "start") {
@@ -154,7 +163,7 @@ async function main(): Promise<void> {
   } else if (normalizedCommand === "attach") {
     await watchWorkflow(harness, workflowId)
     return
-  } else if (WORKFLOW_COMMANDS.has(command!)) {
+  } else if (WORKFLOW_CHANNEL_COMMANDS.has(command!)) {
     const commandArgs = {
       harness,
       command: command as Parameters<DefaultWorkflowCommandRunner["run"]>[0]["command"],

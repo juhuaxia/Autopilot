@@ -231,6 +231,45 @@ mkdir -p ~/.config/opencode/skills
 
 如果你在 `requiredSkills` 里填了一个名称，但所有 `skillRoots` 目录下都没有对应文件，Autopilot 会在工作流提示中标注 `[MISSING_SKILLS]`，但**不会中断流程**，正常继续运行。
 
+## 更新 Autopilot
+
+支持两种更新入口：
+
+### 方式 1：CLI 更新
+
+如果你想在 OpenCode 对话之外主动刷新插件，可以执行：
+
+```bash
+bun run src/cli.ts update
+```
+
+也支持这个别名：
+
+```bash
+bun run src/cli.ts autopilot-update
+```
+
+### 方式 2：OpenCode 工具更新
+
+在 OpenCode 内请使用独立维护工具 `autopilot_update`。
+
+- 它**不是** `workflow_*` 命令。
+- 它**不属于** `workflow_channel`。
+- 它**不会进入**任何 workflow 生命周期或状态机。
+
+如果你是在和 agent 对话，明确要求它**调用 `autopilot_update`**，会比只发送字符串 `autopilot_update` 更稳妥。
+
+### 更新器会做什么
+
+- **本地源码安装（`file://<repo>/dist/plugin.js`）**：会检查仓库版本，只有落后于最新 release 时才重新构建。
+- **release 文件安装（`file://~/.config/opencode/plugins/autopilot/plugin.js`）**：会下载最新 GitHub release，并安全替换本地安装目录。
+- **npm 包安装（`@fkqfkq123/opencode-autopilot`）**：会读取当前已安装版本，并在需要时提示你执行 `npm update @fkqfkq123/opencode-autopilot`。
+
+### 更新后要做什么
+
+- 只要真的发生了更新，就建议你重启 OpenCode，让内存中的插件缓存重新加载新代码。
+- 如果更新器提示你已经是最新版本，则不需要重启。
+
 ## 常见问题
 
 ### 加了插件后 OpenCode 启动失败

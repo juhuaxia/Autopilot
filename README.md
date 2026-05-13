@@ -233,6 +233,45 @@ From now on, every time the workflow reaches the **Build** stage, AI receives yo
 
 If you reference a skill name in `requiredSkills` but the file doesn't exist in any `skillRoots`, Autopilot notes it as `[MISSING_SKILLS]` in the workflow prompt but **continues running normally**. It won't break your workflow.
 
+## Updating Autopilot
+
+There are two supported update entrypoints:
+
+### Option 1: CLI update
+
+Use this when you want to refresh the installed plugin outside the OpenCode chat flow:
+
+```bash
+bun run src/cli.ts update
+```
+
+Alias also supported:
+
+```bash
+bun run src/cli.ts autopilot-update
+```
+
+### Option 2: OpenCode tool update
+
+Inside OpenCode, use the standalone maintenance tool `autopilot_update`.
+
+- It is **not** a `workflow_*` command.
+- It is **not** part of `workflow_channel`.
+- It does **not** enter any workflow lifecycle or workflow state machine.
+
+If you are chatting with an agent, asking it to **call `autopilot_update`** is more reliable than only sending the literal text `autopilot_update`.
+
+### What the updater does
+
+- **Local source install (`file://<repo>/dist/plugin.js`)**: checks the repo version and only rebuilds when it is behind the latest release.
+- **Release file install (`file://~/.config/opencode/plugins/autopilot/plugin.js`)**: downloads the latest GitHub release bundle and replaces the installed plugin safely.
+- **npm package install (`@fkqfkq123/opencode-autopilot`)**: reports the installed package version and tells you to run `npm update @fkqfkq123/opencode-autopilot` when needed.
+
+### After updating
+
+- After any real update, restart OpenCode so its in-memory plugin cache reloads the new plugin code.
+- If the updater reports that you are already current, no restart is required.
+
 ## Troubleshooting
 
 ### OpenCode won't start after adding the plugin

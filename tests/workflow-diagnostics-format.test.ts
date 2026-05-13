@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { formatWorkflowDoctorResult, formatWorkflowInstallResult } from "../packages/runtime/src/diagnostics/workflow-diagnostics-format"
+import { formatWorkflowDoctorResult, formatWorkflowInstallResult, formatWorkflowUpdateResult } from "../packages/runtime/src/diagnostics/workflow-diagnostics-format"
 
 describe("workflow diagnostics formatters", () => {
   it("formats doctor result into human-readable text", () => {
@@ -32,6 +32,29 @@ describe("workflow diagnostics formatters", () => {
 
     expect(output).toContain("Workflow Install: OK")
     expect(output).toContain("Project autopilot.json")
+    expect(output).toContain("Recommended next steps:")
+  })
+
+  it("formats update result into human-readable text", () => {
+    const output = formatWorkflowUpdateResult({
+      ok: true,
+      mode: "release-file",
+      opencodeConfigFile: "/home/user/.config/opencode/opencode.json",
+      pluginEntry: "file:///home/user/.config/opencode/plugins/autopilot/plugin.js",
+      previousVersion: "0.1.9",
+      currentVersion: "0.1.9",
+      latestVersion: "0.1.10",
+      updated: true,
+      restartRequired: true,
+      warnings: [],
+      nextSteps: ["Restart OpenCode so it reloads the updated plugin files."],
+    })
+
+    expect(output).toContain("Workflow Update: OK")
+    expect(output).toContain("Mode: release-file")
+    expect(output).toContain("Previous version: 0.1.9")
+    expect(output).toContain("Latest version: 0.1.10")
+    expect(output).toContain("Restart required: yes")
     expect(output).toContain("Recommended next steps:")
   })
 })

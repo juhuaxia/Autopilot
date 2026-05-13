@@ -1,0 +1,221 @@
+import { describe, expect, it } from "bun:test"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { runAutopilotUpdate } from "../packages/runtime/src/install/autopilot-updater"
+
+describe("autopilot updater", () => {
+  it("skips local-source rebuild when version already matches latest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-local-skip-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(join(repo, "dist"), { recursive: true })
+    await writeFile(join(repo, "package.json"), JSON.stringify({ version: "0.1.10" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: [`file://${join(repo, "dist", "plugin.js")}`] }, null, 2),
+    )
+
+    let built = false
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+        buildLocalSource: async () => {
+          built = true
+        },
+      },
+    })
+
+    expect(result.mode).toBe("local-source")
+    expect(result.updated).toBe(false)
+    expect(result.restartRequired).toBe(false)
+    expect(built).toBe(false)
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("rebuilds local-source installs when version is behind latest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-local-build-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(join(repo, "dist"), { recursive: true })
+    await writeFile(join(repo, "package.json"), JSON.stringify({ version: "0.1.9" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: [`file://${join(repo, "dist", "plugin.js")}`] }, null, 2),
+    )
+
+    let builtRepo: string | undefined
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+        buildLocalSource: async (repoRoot) => {
+          builtRepo = repoRoot
+        },
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.mode).toBe("local-source")
+    expect(result.previousVersion).toBe("0.1.9")
+    expect(result.currentVersion).toBe("0.1.9")
+    expect(result.updated).toBe(true)
+    expect(result.restartRequired).toBe(true)
+    expect(builtRepo).toBe(repo)
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("reports previous and current version for release-file installs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-release-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const installRoot = join(home, ".config", "opencode", "plugins", "autopilot")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(installRoot, { recursive: true })
+    await mkdir(repo, { recursive: true })
+    await writeFile(join(installRoot, "plugin.js"), "export default {}\n")
+    await writeFile(join(installRoot, "release.json"), JSON.stringify({ name: "autopilot", version: "0.1.9" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: [`file://${join(installRoot, "plugin.js")}`] }, null, 2),
+    )
+
+    let updatedInstallRoot: string | undefined
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+        updateInstalledRelease: async ({ installRoot: targetRoot }) => {
+          updatedInstallRoot = targetRoot
+          await writeFile(join(targetRoot, "release.json"), JSON.stringify({ name: "autopilot", version: "0.1.10" }, null, 2))
+        },
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.mode).toBe("release-file")
+    expect(result.previousVersion).toBe("0.1.9")
+    expect(result.currentVersion).toBe("0.1.10")
+    expect(updatedInstallRoot).toBe(installRoot)
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("reads installed package version for npm installs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(join(repo, "package.json"), JSON.stringify({ version: "9.9.9" }, null, 2))
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.1.9" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2),
+    )
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.mode).toBe("package")
+    expect(result.previousVersion).toBe("0.1.9")
+    expect(result.currentVersion).toBe("0.1.9")
+    expect(result.nextSteps[0]).toContain("npm update @fkqfkq123/opencode-autopilot")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("returns already-up-to-date message for current package installs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-current-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.1.10" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2),
+    )
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+      },
+    })
+
+    expect(result.updated).toBe(false)
+    expect(result.restartRequired).toBe(false)
+    expect(result.nextSteps[0]).toContain("already at the latest installed package version")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("asks for install when plugin is not registered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-missing-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+    await writeFile(join(home, ".config", "opencode", "opencode.json"), JSON.stringify({ plugin: [] }, null, 2))
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.mode).toBe("not-installed")
+    expect(result.nextSteps[0]).toContain("bun run src/cli.ts install")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("writes release metadata with version", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "autopilot-build-release-"))
+
+    try {
+      await writeFile(join(repo, "package.json"), JSON.stringify({ version: "1.2.3" }, null, 2))
+      await writeFile(join(repo, "plugin.ts"), "export default {}\n")
+      await writeFile(join(repo, "README.md"), "# Test\n")
+
+      const proc = Bun.spawn(["bun", "run", "scripts/build-release.ts"], {
+        cwd: "/Users/macbookpro/Documents/workspace/yibai_fe_workflow",
+        env: {
+          ...process.env,
+          PWD: repo,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const exitCode = await proc.exited
+      expect(exitCode).toBe(0)
+
+      const metadata = JSON.parse(await readFile("/Users/macbookpro/Documents/workspace/yibai_fe_workflow/release/autopilot/release.json", "utf8")) as { version?: string }
+      expect(metadata.version).toBeDefined()
+    } finally {
+      await rm("/Users/macbookpro/Documents/workspace/yibai_fe_workflow/release", { recursive: true, force: true })
+      await rm(repo, { recursive: true, force: true })
+    }
+  })
+})

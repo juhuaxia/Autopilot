@@ -1,4 +1,5 @@
 import type { WorkflowDoctorResult } from "./workflow-doctor"
+import type { AutopilotUpdateResult } from "../install/autopilot-updater"
 import type { WorkflowInstallResult } from "../install/workflow-installer"
 import { AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
 
@@ -78,6 +79,40 @@ export function formatWorkflowInstallResult(result: WorkflowInstallResult): stri
   lines.push("Recommended next steps:")
   lines.push("- Run: bun run src/cli.ts doctor")
   lines.push("- Then open OpenCode and use workflow_open / workflow_attach")
+  lines.push(divider)
+  return lines.join("\n")
+}
+
+export function formatWorkflowUpdateResult(result: AutopilotUpdateResult): string {
+  const lines = [
+    divider,
+    `Workflow Update: ${result.ok ? "OK" : "ATTENTION"}`,
+    `Mode: ${result.mode}`,
+    `OpenCode config: ${result.opencodeConfigFile}`,
+    `Plugin entry: ${result.pluginEntry ?? "not installed"}`,
+    `Previous version: ${result.previousVersion ?? "unknown"}`,
+    `Current version: ${result.currentVersion ?? "unknown"}`,
+    `Latest version: ${result.latestVersion ?? "unknown"}`,
+    `Updated: ${result.updated ? "yes" : "no"}`,
+    `Restart required: ${result.restartRequired ? "yes" : "no"}`,
+  ]
+
+  if (result.warnings.length > 0) {
+    lines.push("")
+    lines.push("Warnings:")
+    for (const warning of result.warnings) {
+      lines.push(`- ${warning}`)
+    }
+  }
+
+  if (result.nextSteps.length > 0) {
+    lines.push("")
+    lines.push("Recommended next steps:")
+    for (const step of result.nextSteps) {
+      lines.push(`- ${step}`)
+    }
+  }
+
   lines.push(divider)
   return lines.join("\n")
 }

@@ -4,15 +4,15 @@ import { DefaultWorkflowCommandRunner } from "../commands/default-workflow-comma
 import { DefaultWorkflowPluginCommandAdapter } from "../commands/opencode-plugin-command-adapter"
 import { createHarness } from "../bootstrap/create-harness"
 import { runWorkflowDoctor } from "../diagnostics/workflow-doctor"
+import { runAutopilotUpdate } from "../install/autopilot-updater"
 import { runWorkflowInstall } from "../install/workflow-installer"
 import {
   SdkOpencodeSessionClient,
   type PluginSdkClient,
 } from "../../../adapters/opencode/src/opencode-session-client"
 import type { Phase, WorkflowStatus } from "../../../core/src/state/phase"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
 import { z } from "zod"
 import { readJsonFile } from "../shared/json-file"
 import { DefaultWorkflowWorkspace } from "../workspace/workflow-workspace"
@@ -438,6 +438,16 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         args: {},
         execute: async () => {
           return JSON.stringify(await runWorkflowInstall({
+            cwd: input.directory,
+            homeDir: homedir(),
+          }), null, 2)
+        },
+      },
+      autopilot_update: {
+        description: "Refresh the plugin installation and tell OpenCode to reload the newest files.",
+        args: {},
+        execute: async () => {
+          return JSON.stringify(await runAutopilotUpdate({
             cwd: input.directory,
             homeDir: homedir(),
           }), null, 2)

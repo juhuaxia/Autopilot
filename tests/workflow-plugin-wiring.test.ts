@@ -22,6 +22,7 @@ describe("workflow plugin wiring", () => {
     expect(typeof plugin.tool.workflow_back.execute).toBe("function")
     expect(typeof plugin.tool.workflow_doctor.execute).toBe("function")
     expect(typeof plugin.tool.workflow_install.execute).toBe("function")
+    expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
   })
 
   it("returns agent-friendly guidance in workflow output", async () => {

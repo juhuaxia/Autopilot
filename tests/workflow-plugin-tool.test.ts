@@ -40,6 +40,7 @@ describe("workflow plugin tool export", () => {
     expect(typeof plugin.tool.workflow_back.execute).toBe("function")
     expect(typeof plugin.tool.workflow_doctor.execute).toBe("function")
     expect(typeof plugin.tool.workflow_install.execute).toBe("function")
+    expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
   })
 
   it("exposes workflow_doctor and returns diagnostic JSON", async () => {
@@ -64,6 +65,15 @@ describe("workflow plugin tool export", () => {
     expect(output).toContain("projectWorkflowConfigFile")
     expect(output).toContain("opencodeConfigFile")
     expect(output).toContain("pluginEntry")
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("exposes autopilot_update tool", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-update-"))
+    const plugin = await workflowPlugin({ directory: dir })
+
+    expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
 
     await rm(dir, { recursive: true, force: true })
   })
