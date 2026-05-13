@@ -32,6 +32,8 @@ describe("watch renderer", () => {
       recentEvents: [
         { workflowId: workflow.workflowId, type: "phase.changed", at: "2026-01-01T00:00:00.000Z" },
         { workflowId: workflow.workflowId, type: "session.dispatched", at: "2026-01-01T00:00:01.000Z" },
+        { workflowId: workflow.workflowId, type: "artifact.repair_dispatched", at: "2026-01-01T00:00:02.000Z", payload: { phase: "develop" } },
+        { workflowId: workflow.workflowId, type: "artifact.repair_blocked", at: "2026-01-01T00:00:03.000Z", payload: { phase: "develop" } },
       ],
       attached: true,
     })
@@ -40,5 +42,7 @@ describe("watch renderer", () => {
     expect(output).toContain("Recent events:")
     expect(output).toContain("phase.changed")
     expect(output).toContain("session.dispatched")
+    expect(output).toContain("artifact.repair_dispatched (develop)")
+    expect(output).toContain("artifact.repair_blocked (develop)")
   })
 })

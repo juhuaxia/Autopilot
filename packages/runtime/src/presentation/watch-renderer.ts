@@ -23,6 +23,14 @@ export function renderWatchFrame(args: {
     lines.push("")
     lines.push("Recent events:")
     for (const event of recentEvents.slice(-5)) {
+      if (event.type === "artifact.repair_dispatched") {
+        lines.push(`- ${event.at} ${event.type} (${String(event.payload?.phase ?? "unknown")})`)
+        continue
+      }
+      if (event.type === "artifact.repair_blocked") {
+        lines.push(`- ${event.at} ${event.type} (${String(event.payload?.phase ?? "unknown")})`)
+        continue
+      }
       lines.push(`- ${event.at} ${event.type}`)
     }
   }

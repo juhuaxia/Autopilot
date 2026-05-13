@@ -255,6 +255,49 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("renders structured artifact repair details in workflow status output", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-status-repair-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-status-repair"
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "新增 artifact repair 状态输出验证。",
+      })
+      await harness.stateStore.updateWorkflow(workflowId, {
+        phase: "develop",
+        status: "in_progress",
+      })
+      await harness.stateStore.updateRuntime(workflowId, {
+        developArtifactRepairDispatchPending: true,
+      })
+      await harness.eventStore.append({
+        workflowId,
+        type: "artifact.repair_dispatched",
+        at: new Date().toISOString(),
+        payload: {
+          phase: "develop",
+        },
+      })
+
+      const result = await runner.run({
+        harness,
+        command: "workflow-status",
+        workflowId,
+      })
+
+      expect(result.output).toContain("Artifact repair pending: yes")
+      expect(result.output).toContain("Artifact repair last event: artifact.repair_dispatched")
+      expect(result.output).toContain("Artifact repair phase: develop")
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it("shows plan approval preview and done completion feedback", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-approval-preview-"))
     const harness = await createHarness(baseDir)

@@ -44,9 +44,10 @@ function extractSection(content: string, heading: string): string {
 async function buildStatusEnhancements(args: {
   harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
   workflow: WorkflowState
+  runtime: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>["stateStore"] extends { getRuntime(workflowId: string): Promise<infer T> } ? T | null : null
   events: WorkflowEventRecord[]
 }): Promise<string[]> {
-  const { harness, workflow, events } = args
+  const { harness, workflow, runtime, events } = args
   const evaluation = await harness.artifactEvaluator.evaluate(workflow)
   const artifactContent = await readFile(harness.workspace.phaseArtifactFile(workflow.workflowId, workflow.phase), "utf8").catch(() => "")
   const lines: string[] = []
@@ -79,6 +80,29 @@ async function buildStatusEnhancements(args: {
 
   if (evaluation.warnings && evaluation.warnings.length > 0) {
     lines.push(`Warning signals: ${evaluation.warnings.join(" | ")}`)
+  }
+
+  const artifactRepairPending = workflow.phase === "develop"
+    ? runtime?.developArtifactRepairDispatchPending === true
+    : workflow.phase === "review"
+      ? runtime?.reviewArtifactRepairDispatchPending === true
+      : workflow.phase === "test"
+        ? runtime?.testArtifactRepairDispatchPending === true
+        : false
+  const recentRepairEvent = [...events].reverse().find((event) =>
+    event.type === "artifact.repair_dispatched" || event.type === "artifact.repair_blocked",
+  )
+  if (artifactRepairPending || recentRepairEvent || evaluation.missing.includes("artifact_unchanged_from_template")) {
+    lines.push(`Artifact repair pending: ${artifactRepairPending ? "yes" : "no"}`)
+    if (evaluation.missing.includes("artifact_unchanged_from_template")) {
+      lines.push("Artifact repair signal: artifact_unchanged_from_template")
+    }
+    if (recentRepairEvent) {
+      lines.push(`Artifact repair last event: ${recentRepairEvent.type}`)
+      if (recentRepairEvent.payload?.phase) {
+        lines.push(`Artifact repair phase: ${String(recentRepairEvent.payload.phase)}`)
+      }
+    }
   }
 
   if (workflow.phase === "develop") {
@@ -201,6 +225,7 @@ async function buildWorkflowStatusResult(args: {
   const enhancementLines = await buildStatusEnhancements({
     harness,
     workflow,
+    runtime,
     events,
   })
 
