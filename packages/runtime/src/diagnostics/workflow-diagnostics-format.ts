@@ -89,6 +89,7 @@ export function formatWorkflowUpdateResult(result: AutopilotUpdateResult): strin
     `Workflow Update: ${result.ok ? "OK" : "ATTENTION"}`,
     `Mode: ${result.mode}`,
     `OpenCode config: ${result.opencodeConfigFile}`,
+    `Resolved config source: ${result.resolvedConfigSourceFile}`,
     `Plugin entry: ${result.pluginEntry ?? "not installed"}`,
     `Previous version: ${result.previousVersion ?? "unknown"}`,
     `Current version: ${result.currentVersion ?? "unknown"}`,
@@ -96,6 +97,14 @@ export function formatWorkflowUpdateResult(result: AutopilotUpdateResult): strin
     `Updated: ${result.updated ? "yes" : "no"}`,
     `Restart required: ${result.restartRequired ? "yes" : "no"}`,
   ]
+
+  if (result.detectedPluginEntries.length > 0) {
+    lines.push("")
+    lines.push("Detected plugin entries:")
+    for (const entry of result.detectedPluginEntries) {
+      lines.push(`- ${entry}`)
+    }
+  }
 
   if (result.warnings.length > 0) {
     lines.push("")

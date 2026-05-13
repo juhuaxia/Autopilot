@@ -14,7 +14,9 @@ export type AutopilotUpdateResult = {
   ok: boolean
   mode: AutopilotUpdateMode
   opencodeConfigFile: string
+  resolvedConfigSourceFile: string
   pluginEntry: string | null
+  detectedPluginEntries: string[]
   previousVersion: string | null
   currentVersion: string | null
   latestVersion: string | null
@@ -39,6 +41,12 @@ type ResolvedPluginTarget =
   | { mode: "release-file"; pluginEntry: string; pluginFile: string }
   | { mode: "package"; pluginEntry: string }
   | { mode: "not-installed"; pluginEntry: null }
+
+function extractPluginEntries(config: ParsedOpencodeConfig): string[] {
+  return Array.isArray(config.plugin)
+    ? config.plugin.filter((entry): entry is string => typeof entry === "string")
+    : []
+}
 
 async function runCommand(command: string, args: string[], cwd?: string): Promise<void> {
   await new Promise<void>((resolvePromise, reject) => {
@@ -258,7 +266,9 @@ export async function runAutopilotUpdate(args: {
       ok: false,
       mode: "not-installed",
       opencodeConfigFile,
+      resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: null,
+      detectedPluginEntries: [],
       previousVersion: null,
       currentVersion: null,
       latestVersion,
@@ -269,20 +279,36 @@ export async function runAutopilotUpdate(args: {
     }
   }
 
+  const detectedPluginEntries = extractPluginEntries(parsed)
+
   const target = await resolvePluginTarget({ repoRoot, config: parsed })
   if (target.mode === "not-installed") {
+    const detectedPackageEntry = detectedPluginEntries.includes(PACKAGE_NAME)
+    warnings.push(
+      detectedPackageEntry
+        ? `Updater saw ${PACKAGE_NAME} in ${configResolution.filePath} but could not complete package-mode detection in the current environment`
+        : `Updater did not recognize any supported plugin entry in ${configResolution.filePath}`,
+    )
     return {
       ok: false,
       mode: "not-installed",
       opencodeConfigFile,
+      resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: null,
+      detectedPluginEntries,
       previousVersion: null,
       currentVersion: null,
       latestVersion,
       updated: false,
       restartRequired: false,
       warnings,
-      nextSteps: ["Run: bun run src/cli.ts install"],
+      nextSteps: detectedPackageEntry
+        ? [
+            `Verify that ${configResolution.filePath} is the config file you expect this session to use.`,
+            `If this is an npm install, run: npm update ${PACKAGE_NAME}`,
+            "If the plugin still reports not-installed, compare the detected plugin entries above with the config file you inspected.",
+          ]
+        : ["Run: bun run src/cli.ts install"],
     }
   }
 
@@ -293,7 +319,9 @@ export async function runAutopilotUpdate(args: {
       ok: true,
       mode: "package",
       opencodeConfigFile,
+      resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: target.pluginEntry,
+      detectedPluginEntries,
       previousVersion: currentVersion,
       currentVersion,
       latestVersion,
@@ -314,7 +342,9 @@ export async function runAutopilotUpdate(args: {
         ok: true,
         mode: "local-source",
         opencodeConfigFile,
+        resolvedConfigSourceFile: configResolution.filePath,
         pluginEntry: target.pluginEntry,
+        detectedPluginEntries,
         previousVersion,
         currentVersion: previousVersion,
         latestVersion,
@@ -331,7 +361,9 @@ export async function runAutopilotUpdate(args: {
       ok: true,
       mode: "local-source",
       opencodeConfigFile,
+      resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: target.pluginEntry,
+      detectedPluginEntries,
       previousVersion,
       currentVersion,
       latestVersion,
@@ -354,7 +386,9 @@ export async function runAutopilotUpdate(args: {
     ok: true,
     mode: "release-file",
     opencodeConfigFile,
+    resolvedConfigSourceFile: configResolution.filePath,
     pluginEntry: target.pluginEntry,
+    detectedPluginEntries,
     previousVersion,
     currentVersion,
     latestVersion,

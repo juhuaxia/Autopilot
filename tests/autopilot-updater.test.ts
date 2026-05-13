@@ -32,6 +32,8 @@ describe("autopilot updater", () => {
     expect(result.mode).toBe("local-source")
     expect(result.updated).toBe(false)
     expect(result.restartRequired).toBe(false)
+    expect(result.resolvedConfigSourceFile).toContain("opencode.json")
+    expect(result.detectedPluginEntries).toEqual([`file://${join(repo, "dist", "plugin.js")}`])
     expect(built).toBe(false)
 
     await rm(root, { recursive: true, force: true })
@@ -65,6 +67,7 @@ describe("autopilot updater", () => {
     expect(result.mode).toBe("local-source")
     expect(result.previousVersion).toBe("0.1.9")
     expect(result.currentVersion).toBe("0.1.9")
+    expect(result.detectedPluginEntries).toEqual([`file://${join(repo, "dist", "plugin.js")}`])
     expect(result.updated).toBe(true)
     expect(result.restartRequired).toBe(true)
     expect(builtRepo).toBe(repo)
@@ -104,6 +107,7 @@ describe("autopilot updater", () => {
     expect(result.mode).toBe("release-file")
     expect(result.previousVersion).toBe("0.1.9")
     expect(result.currentVersion).toBe("0.1.10")
+    expect(result.detectedPluginEntries).toEqual([`file://${join(installRoot, "plugin.js")}`])
     expect(updatedInstallRoot).toBe(installRoot)
 
     await rm(root, { recursive: true, force: true })
@@ -135,6 +139,7 @@ describe("autopilot updater", () => {
     expect(result.mode).toBe("package")
     expect(result.previousVersion).toBe("0.1.9")
     expect(result.currentVersion).toBe("0.1.9")
+    expect(result.detectedPluginEntries).toEqual(["@fkqfkq123/opencode-autopilot"])
     expect(result.nextSteps[0]).toContain("npm update @fkqfkq123/opencode-autopilot")
 
     await rm(root, { recursive: true, force: true })
@@ -163,6 +168,7 @@ describe("autopilot updater", () => {
 
     expect(result.updated).toBe(false)
     expect(result.restartRequired).toBe(false)
+    expect(result.detectedPluginEntries).toEqual(["@fkqfkq123/opencode-autopilot"])
     expect(result.nextSteps[0]).toContain("already at the latest installed package version")
 
     await rm(root, { recursive: true, force: true })
@@ -186,7 +192,34 @@ describe("autopilot updater", () => {
 
     expect(result.ok).toBe(false)
     expect(result.mode).toBe("not-installed")
+    expect(result.detectedPluginEntries).toEqual([])
     expect(result.nextSteps[0]).toContain("bun run src/cli.ts install")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("returns a suspicious mismatch warning when package entry exists but package mode is not recognized", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-mismatch-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2),
+    )
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.1.10",
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.mode).toBe("package")
+    expect(result.detectedPluginEntries).toEqual(["@fkqfkq123/opencode-autopilot"])
 
     await rm(root, { recursive: true, force: true })
   })
