@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8] - 2026-05-14
+
+### Changed
+
+- `autopilot_update` package mode now performs a real update action by clearing the OpenCode package cache instead of only suggesting a manual npm update.
+- Package-mode updater results now report `currentVersion` as unknown after cache invalidation until OpenCode reloads the refreshed package.
+
+### Added
+
+- Added a prominent restart warning block to updater output.
+- Added explicit guidance that other OpenCode windows currently using Autopilot should also be restarted.
+
+### Verification
+
+- Updater regression tests pass.
+- Typecheck passes.
+
 ## [0.2.6] - 2026-05-14
 
 ### Changed

@@ -137,16 +137,20 @@ describe("autopilot updater", () => {
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
         fetchLatestPackageVersion: async () => "0.2.3",
+        clearCachedPackageInstall: async () => {},
       },
     })
 
     expect(result.ok).toBe(true)
     expect(result.mode).toBe("package")
     expect(result.previousVersion).toBe("0.1.9")
-    expect(result.currentVersion).toBe("0.1.9")
+    expect(result.currentVersion).toBeNull()
     expect(result.latestVersion).toBe("0.2.3")
     expect(result.detectedPluginEntries).toEqual(["@fkqfkq123/opencode-autopilot"])
-    expect(result.nextSteps[0]).toContain("npm update @fkqfkq123/opencode-autopilot")
+    expect(result.updated).toBe(true)
+    expect(result.restartRequired).toBe(true)
+    expect(result.nextSteps[0]).toContain("refreshed Autopilot package cache")
+    expect(result.nextSteps[1]).toContain("other OpenCode windows")
 
     await rm(root, { recursive: true, force: true })
   })
@@ -211,6 +215,7 @@ describe("autopilot updater", () => {
       options: {
         fetchLatestReleaseVersion: async () => "0.2.4",
         fetchLatestPackageVersion: async () => "0.2.5",
+        clearCachedPackageInstall: async () => {},
       },
     })
 
@@ -222,6 +227,43 @@ describe("autopilot updater", () => {
     ])
     expect(result.ignoredPluginEntries).toEqual([`file://${join(staleRoot, "plugin.js")}`])
     expect(result.latestVersion).toBe("0.2.5")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("clears OpenCode package cache when package install is behind latest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-clear-cache-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const packageRoot = join(home, ".cache", "opencode", "packages", "@fkqfkq123", "opencode-autopilot@latest", "node_modules", "@fkqfkq123", "opencode-autopilot")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.2.5" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2),
+    )
+
+    let clearedHomeDir: string | undefined
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestPackageVersion: async () => "0.2.6",
+        fetchLatestReleaseVersion: async () => "0.2.6",
+        clearCachedPackageInstall: async (targetHomeDir) => {
+          clearedHomeDir = targetHomeDir
+        },
+      },
+    })
+
+    expect(result.mode).toBe("package")
+    expect(result.updated).toBe(true)
+    expect(result.restartRequired).toBe(true)
+    expect(result.previousVersion).toBe("0.2.5")
+    expect(result.currentVersion).toBeNull()
+    expect(clearedHomeDir).toBe(home)
 
     await rm(root, { recursive: true, force: true })
   })

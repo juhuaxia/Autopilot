@@ -130,6 +130,13 @@ export function formatWorkflowUpdateResult(result: AutopilotUpdateResult): strin
     }
   }
 
+  if (result.restartRequired) {
+    lines.push("")
+    lines.push("IMPORTANT:")
+    lines.push("- Restart OpenCode before using Autopilot again.")
+    lines.push("- If other OpenCode windows are currently using Autopilot, restart those windows too.")
+  }
+
   lines.push(divider)
   return lines.join("\n")
 }

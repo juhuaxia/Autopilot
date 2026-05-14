@@ -32,6 +32,7 @@ export type AutopilotUpdateOptions = {
   fetchLatestReleaseVersion?: (repoSlug: string) => Promise<string | null>
   fetchLatestPackageVersion?: (packageName: string) => Promise<string | null>
   updateInstalledRelease?: (args: { installRoot: string; repoSlug: string }) => Promise<void>
+  clearCachedPackageInstall?: (homeDir: string) => Promise<void>
 }
 
 type ParsedOpencodeConfig = {
@@ -224,6 +225,24 @@ async function readOpencodeCachedPackageVersion(homeDir: string): Promise<string
   return readVersionFromJson(packageMetadata)
 }
 
+async function clearCachedPackageInstall(homeDir: string): Promise<void> {
+  const scopedName = PACKAGE_NAME.split("/")[0]
+  const unscopedName = PACKAGE_NAME.split("/")[1]
+  if (!scopedName || !unscopedName) {
+    return
+  }
+
+  const cacheRoot = join(
+    homeDir,
+    ".cache",
+    "opencode",
+    "packages",
+    scopedName,
+    `${unscopedName}@latest`,
+  )
+  await rm(cacheRoot, { recursive: true, force: true })
+}
+
 async function resolvePluginTarget(args: { repoRoot: string; config: ParsedOpencodeConfig }): Promise<ResolvedPluginTarget> {
   const plugins = Array.isArray(args.config.plugin)
     ? args.config.plugin.filter((entry): entry is string => typeof entry === "string")
@@ -368,6 +387,26 @@ export async function runAutopilotUpdate(args: {
     const currentVersion = await readOpencodeCachedPackageVersion(args.homeDir)
       ?? await readInstalledPackageVersion(repoRoot)
     const alreadyCurrent = Boolean(currentVersion && latestVersion && currentVersion === latestVersion)
+    if (alreadyCurrent) {
+      return {
+        ok: true,
+        mode: "package",
+        opencodeConfigFile,
+        resolvedConfigSourceFile: configResolution.filePath,
+        pluginEntry: target.pluginEntry,
+        detectedPluginEntries,
+        ignoredPluginEntries,
+        previousVersion: currentVersion,
+        currentVersion,
+        latestVersion,
+        updated: false,
+        restartRequired: false,
+        warnings,
+        nextSteps: ["Autopilot is already at the latest installed package version."],
+      }
+    }
+
+    await (args.options?.clearCachedPackageInstall ?? clearCachedPackageInstall)(args.homeDir)
     return {
       ok: true,
       mode: "package",
@@ -377,14 +416,15 @@ export async function runAutopilotUpdate(args: {
       detectedPluginEntries,
       ignoredPluginEntries,
       previousVersion: currentVersion,
-      currentVersion,
+      currentVersion: null,
       latestVersion,
-      updated: false,
-      restartRequired: false,
+      updated: true,
+      restartRequired: true,
       warnings,
-      nextSteps: alreadyCurrent
-        ? ["Autopilot is already at the latest installed package version."]
-        : [`Run: npm update ${PACKAGE_NAME}`, "Restart OpenCode after the package manager finishes."],
+      nextSteps: [
+        "Restart OpenCode so it reloads the refreshed Autopilot package cache.",
+        "If you have other OpenCode windows that are currently using Autopilot, restart those windows too.",
+      ],
     }
   }
 

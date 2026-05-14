@@ -50,7 +50,10 @@ describe("workflow diagnostics formatters", () => {
       updated: true,
       restartRequired: true,
       warnings: [],
-      nextSteps: ["Restart OpenCode so it reloads the updated plugin files."],
+      nextSteps: [
+        "Restart OpenCode so it reloads the refreshed Autopilot package cache.",
+        "If you have other OpenCode windows that are currently using Autopilot, restart those windows too.",
+      ],
     })
 
     expect(output).toContain("Workflow Update: OK")
@@ -62,5 +65,7 @@ describe("workflow diagnostics formatters", () => {
     expect(output).toContain("Latest version: 0.1.10")
     expect(output).toContain("Restart required: yes")
     expect(output).toContain("Recommended next steps:")
+    expect(output).toContain("IMPORTANT:")
+    expect(output).toContain("other OpenCode windows")
   })
 })
