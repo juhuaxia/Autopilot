@@ -345,6 +345,8 @@ Tagging `v*` runs `.github/workflows/release.yml`, which:
 - uploads the GitHub release tarball
 - publishes to npm when `NPM_TOKEN` is configured in repository secrets
 
+Important: keep the GitHub Release version aligned with the npm package version. If npm is published to a newer version but the latest GitHub Release is still older, file/release installs will see outdated latest-version information.
+
 ### Remaining requirement
 
 Before calling the package fully public-ready, add an explicit open-source license choice to both:

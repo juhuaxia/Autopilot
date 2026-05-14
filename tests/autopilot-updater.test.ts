@@ -23,6 +23,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.1.10",
         buildLocalSource: async () => {
           built = true
         },
@@ -57,6 +58,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.1.10",
         buildLocalSource: async (repoRoot) => {
           builtRepo = repoRoot
         },
@@ -96,6 +98,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.1.10",
         updateInstalledRelease: async ({ installRoot: targetRoot }) => {
           updatedInstallRoot = targetRoot
           await writeFile(join(targetRoot, "release.json"), JSON.stringify({ name: "autopilot", version: "0.1.10" }, null, 2))
@@ -132,6 +135,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.2.3",
       },
     })
 
@@ -139,6 +143,7 @@ describe("autopilot updater", () => {
     expect(result.mode).toBe("package")
     expect(result.previousVersion).toBe("0.1.9")
     expect(result.currentVersion).toBe("0.1.9")
+    expect(result.latestVersion).toBe("0.2.3")
     expect(result.detectedPluginEntries).toEqual(["@fkqfkq123/opencode-autopilot"])
     expect(result.nextSteps[0]).toContain("npm update @fkqfkq123/opencode-autopilot")
 
@@ -163,6 +168,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.1.10",
       },
     })
 
@@ -187,6 +193,7 @@ describe("autopilot updater", () => {
       homeDir: home,
       options: {
         fetchLatestReleaseVersion: async () => "0.1.10",
+        fetchLatestPackageVersion: async () => "0.1.10",
       },
     })
 

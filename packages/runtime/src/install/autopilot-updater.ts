@@ -29,6 +29,7 @@ export type AutopilotUpdateResult = {
 export type AutopilotUpdateOptions = {
   buildLocalSource?: (repoRoot: string) => Promise<void>
   fetchLatestReleaseVersion?: (repoSlug: string) => Promise<string | null>
+  fetchLatestPackageVersion?: (packageName: string) => Promise<string | null>
   updateInstalledRelease?: (args: { installRoot: string; repoSlug: string }) => Promise<void>
 }
 
@@ -88,6 +89,22 @@ async function fetchLatestReleaseVersion(repoSlug: string): Promise<string | nul
       ? parsed.name
       : null
   return candidate ? candidate.replace(/^v/i, "") : null
+}
+
+async function fetchLatestPackageVersion(packageName: string): Promise<string | null> {
+  const encodedName = packageName.replace("/", "%2F")
+  const response = await fetch(`https://registry.npmjs.org/${encodedName}/latest`, {
+    headers: {
+      Accept: "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Unable to fetch latest npm package metadata: ${response.status}`)
+  }
+
+  const parsed = await response.json() as { version?: unknown }
+  return typeof parsed.version === "string" ? parsed.version : null
 }
 
 async function replaceDirectoryAtomically(args: { sourceRoot: string; targetRoot: string; scratchRoot: string }): Promise<void> {
@@ -246,13 +263,7 @@ export async function runAutopilotUpdate(args: {
   const configResolution = await resolveOpencodeConfigFile(opencodeConfigDir)
   const opencodeConfigFile = join(opencodeConfigDir, "opencode.json")
   const warnings = [...configResolution.warnings]
-
   let latestVersion: string | null = null
-  try {
-    latestVersion = await (args.options?.fetchLatestReleaseVersion ?? fetchLatestReleaseVersion)(RELEASE_REPO_SLUG)
-  } catch (error) {
-    warnings.push(error instanceof Error ? error.message : "Unable to determine latest release version")
-  }
 
   let parsed: ParsedOpencodeConfig | null = null
   try {
@@ -282,6 +293,15 @@ export async function runAutopilotUpdate(args: {
   const detectedPluginEntries = extractPluginEntries(parsed)
 
   const target = await resolvePluginTarget({ repoRoot, config: parsed })
+
+  try {
+    latestVersion = target.mode === "package"
+      ? await (args.options?.fetchLatestPackageVersion ?? fetchLatestPackageVersion)(PACKAGE_NAME)
+      : await (args.options?.fetchLatestReleaseVersion ?? fetchLatestReleaseVersion)(RELEASE_REPO_SLUG)
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : "Unable to determine latest version")
+  }
+
   if (target.mode === "not-installed") {
     const detectedPackageEntry = detectedPluginEntries.includes(PACKAGE_NAME)
     warnings.push(

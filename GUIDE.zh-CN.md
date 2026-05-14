@@ -343,6 +343,8 @@ npm publish --access public
 - 上传 GitHub release 压缩包
 - 如果仓库里配置了 `NPM_TOKEN` secret，则自动发布到 npm
 
+注意：GitHub Release 的版本也要和 npm 包版本保持同步。如果 npm 已经发布了更高版本，但 latest GitHub Release 还是旧版本，那么 file/release 安装模式看到的 latest 版本信息会过期。
+
 ### 还差最后一个前提
 
 如果你想把它真正作为公开开源包发布，还需要补上明确的许可证：
