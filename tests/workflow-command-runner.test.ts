@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
@@ -109,6 +109,32 @@ describe("workflow command runner", () => {
     expect(content).not.toContain("Route changes and compatibility notes")
 
     await rm(docsDir, { recursive: true, force: true })
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("preserves explicit @read targets in spec refinement artifact input", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-read-targets-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    await mkdir(join(baseDir, "docs"), { recursive: true })
+    const acceptancePath = join(baseDir, "docs", "acceptance.md")
+    await writeFile(acceptancePath, "# Acceptance\n\nVideo generate section must include checklist data.")
+
+    await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-read-targets",
+      payload: `请基于 @read(local_docs/figma_md/17786586547155.png) 和 @read(${acceptancePath}) 启动 workflow。`,
+    })
+
+    const content = await Bun.file(harness.workspace.phaseArtifactFile("wf-command-read-targets", "spec_refinement")).text()
+    expect(content).toContain("[READ_TARGETS]")
+    expect(content).toContain("type=image path=local_docs/figma_md/17786586547155.png")
+    expect(content).toContain(`type=text path=${acceptancePath}`)
+    expect(content).toContain("[READ_TARGETS_POLICY]")
+    expect(content).toContain(`[READ_TARGET_PATH] ${acceptancePath}`)
+    expect(content).toContain("Video generate section must include checklist data.")
+
     await rm(baseDir, { recursive: true, force: true })
   })
 

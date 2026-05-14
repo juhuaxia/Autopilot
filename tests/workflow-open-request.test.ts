@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { buildWorkflowOpenRequest, detectContinuationIntent } from "../packages/runtime/src/commands/workflow-open-request"
+import { buildWorkflowOpenRequest, buildWorkflowOpenRequestWithOptions, detectContinuationIntent } from "../packages/runtime/src/commands/workflow-open-request"
 
 describe("detectContinuationIntent", () => {
   it("detects '继续下一步' as continuation intent", () => {
@@ -129,6 +129,127 @@ describe("workflow open request", () => {
       expect(result.userRequest).toContain("specs/api.md")
       expect(result.userRequest).toContain("[DOC_CANDIDATES_POLICY]")
       expect(result.userRequest).not.toContain("[DOC_CONTENT]")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("extracts explicit @read targets from the prompt", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-read-targets-"))
+    try {
+      await mkdir(join(workspaceRoot, "docs"), { recursive: true })
+      await writeFile(join(workspaceRoot, "docs", "acceptance.md"), "# Acceptance\n\nUse the screenshot values and checklist.")
+
+      const result = await buildWorkflowOpenRequest(
+        "购买页面的 video generate 标题下，增加 @read(local_docs/figma_md/17786586547155.png) 中的内容，并参考 @read(docs/acceptance.md)。",
+        workspaceRoot,
+      )
+
+      expect(result.readTargets).toEqual([
+        {
+          raw: "@read(local_docs/figma_md/17786586547155.png)",
+          path: "local_docs/figma_md/17786586547155.png",
+          kind: "image",
+        },
+        {
+          raw: "@read(docs/acceptance.md)",
+          path: "docs/acceptance.md",
+          kind: "text",
+        },
+      ])
+      expect(result.userRequest).toContain("[READ_TARGETS]")
+      expect(result.userRequest).toContain("type=image path=local_docs/figma_md/17786586547155.png")
+      expect(result.userRequest).toContain("type=text path=docs/acceptance.md")
+      expect(result.userRequest).toContain("[READ_TARGETS_POLICY]")
+      expect(result.userRequest).toContain("[READ_TARGET_PATH] docs/acceptance.md")
+      expect(result.userRequest).toContain("[READ_TARGET_CONTENT]")
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_PATH] local_docs/figma_md/17786586547155.png")
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_ERROR] image understanding unavailable in current environment")
+      expect(result.userRequest).toContain("Use the screenshot values and checklist.")
+      expect(result.textReadTargets).toEqual([
+        {
+          path: "docs/acceptance.md",
+          content: "# Acceptance\n\nUse the screenshot values and checklist.",
+        },
+      ])
+      expect(result.imageReadTargets).toEqual([
+        {
+          path: "local_docs/figma_md/17786586547155.png",
+        },
+      ])
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("renders image summary when image summary service succeeds", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-image-summary-"))
+    try {
+      const result = await buildWorkflowOpenRequestWithOptions(
+        "请参考 @read(local_docs/figma_md/17786586547155.png) 的内容。",
+        workspaceRoot,
+        {
+          imageSummaryService: {
+            summarize: async () => ({
+              ok: true,
+              summary: "- 图中包含 video generate 模块\n- 标题下有文案与列表信息",
+            }),
+          },
+        },
+      )
+
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_PATH] local_docs/figma_md/17786586547155.png")
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_SUMMARY]")
+      expect(result.userRequest).toContain("video generate 模块")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("renders image error when image summary service is unavailable", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-image-error-"))
+    try {
+      const result = await buildWorkflowOpenRequestWithOptions(
+        "请参考 @read(local_docs/figma_md/17786586547155.png) 的内容。",
+        workspaceRoot,
+        {
+          imageSummaryService: {
+            summarize: async () => ({
+              ok: false,
+              summary: "",
+              error: "image understanding unavailable in current environment",
+            }),
+          },
+        },
+      )
+
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_PATH] local_docs/figma_md/17786586547155.png")
+      expect(result.userRequest).toContain("[READ_TARGET_IMAGE_ERROR] image understanding unavailable in current environment")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("limits image read targets to the first five entries", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-image-limit-"))
+    try {
+      const payload = Array.from({ length: 6 }, (_, index) => `@read(local_docs/figma_md/${index}.png)`).join(" ")
+      const calls: string[] = []
+      const result = await buildWorkflowOpenRequestWithOptions(payload, workspaceRoot, {
+        imageSummaryService: {
+          summarize: async (imagePath) => {
+            calls.push(imagePath)
+            return {
+              ok: false,
+              summary: "",
+              error: "image understanding unavailable in current environment",
+            }
+          },
+        },
+      })
+
+      expect(calls.length).toBe(5)
+      expect(result.userRequest).toContain("[READ_TARGET_WARNING] only the first 5 image read targets were analyzed")
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true })
     }
