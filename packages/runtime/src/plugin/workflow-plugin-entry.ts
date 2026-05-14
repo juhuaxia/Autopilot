@@ -21,6 +21,7 @@ export interface WorkflowPluginInputLike {
   directory: string
   serverUrl?: string
   client?: PluginSdkClient
+  homeDir?: string
 }
 
 type PluginEventInput = {
@@ -448,7 +449,10 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         execute: async () => {
           return JSON.stringify(await runWorkflowInstall({
             cwd: input.directory,
-            homeDir: homedir(),
+            homeDir: input.homeDir ?? homedir(),
+            options: {
+              pluginEntry: "@fkqfkq123/opencode-autopilot",
+            },
           }), null, 2)
         },
       },
@@ -458,7 +462,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         execute: async () => {
           return JSON.stringify(await runAutopilotUpdate({
             cwd: input.directory,
-            homeDir: homedir(),
+            homeDir: input.homeDir ?? homedir(),
           }), null, 2)
         },
       },

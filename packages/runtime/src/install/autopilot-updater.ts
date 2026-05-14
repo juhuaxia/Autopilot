@@ -3,7 +3,7 @@ import { spawn } from "node:child_process"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { resolveOpencodeConfigFile, stripJsonComments } from "./workflow-installer"
+import { isAutopilotPluginEntry, resolveOpencodeConfigFile, stripJsonComments } from "./workflow-installer"
 
 const PACKAGE_NAME = "@fkqfkq123/opencode-autopilot"
 const RELEASE_REPO_SLUG = "juhuaxia/Autopilot"
@@ -202,6 +202,28 @@ async function readInstalledPackageVersion(repoRoot: string): Promise<string | n
   return readVersionFromJson(packageMetadata)
 }
 
+async function readOpencodeCachedPackageVersion(homeDir: string): Promise<string | null> {
+  const scopedName = PACKAGE_NAME.split("/")[0]
+  const unscopedName = PACKAGE_NAME.split("/")[1]
+  if (!scopedName || !unscopedName) {
+    return null
+  }
+
+  const cacheRoot = join(
+    homeDir,
+    ".cache",
+    "opencode",
+    "packages",
+    scopedName,
+    `${unscopedName}@latest`,
+    "node_modules",
+    ...PACKAGE_NAME.split("/"),
+    "package.json",
+  )
+  const packageMetadata = await readJsonFileIfExists(cacheRoot)
+  return readVersionFromJson(packageMetadata)
+}
+
 async function resolvePluginTarget(args: { repoRoot: string; config: ParsedOpencodeConfig }): Promise<ResolvedPluginTarget> {
   const plugins = Array.isArray(args.config.plugin)
     ? args.config.plugin.filter((entry): entry is string => typeof entry === "string")
@@ -294,9 +316,14 @@ export async function runAutopilotUpdate(args: {
 
   const detectedPluginEntries = extractPluginEntries(parsed)
   const target = await resolvePluginTarget({ repoRoot, config: parsed })
-  const ignoredPluginEntries = target.pluginEntry
-    ? detectedPluginEntries.filter((entry) => entry !== target.pluginEntry)
-    : detectedPluginEntries
+  const ignoredPluginEntries = (await Promise.all(
+    detectedPluginEntries.map(async (entry) => ({
+      entry,
+      isAutopilot: await isAutopilotPluginEntry(entry),
+    })),
+  ))
+    .filter(({ entry, isAutopilot }) => isAutopilot && entry !== target.pluginEntry)
+    .map(({ entry }) => entry)
 
   try {
     latestVersion = target.mode === "package"
@@ -338,7 +365,8 @@ export async function runAutopilotUpdate(args: {
   }
 
   if (target.mode === "package") {
-    const currentVersion = await readInstalledPackageVersion(repoRoot)
+    const currentVersion = await readOpencodeCachedPackageVersion(args.homeDir)
+      ?? await readInstalledPackageVersion(repoRoot)
     const alreadyCurrent = Boolean(currentVersion && latestVersion && currentVersion === latestVersion)
     return {
       ok: true,

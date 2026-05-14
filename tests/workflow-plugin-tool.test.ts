@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import workflowPlugin from "../packages/runtime/src/plugin/workflow-plugin-entry"
@@ -58,25 +58,41 @@ describe("workflow plugin tool export", () => {
   })
 
   it("exposes workflow_install and returns installer JSON", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "workflow-plugin-install-home-"))
     const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-install-"))
-    const plugin = await workflowPlugin({ directory: dir })
+    try {
+      await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
+      const plugin = await workflowPlugin({ directory: dir, homeDir })
+      const output = await plugin.tool.workflow_install.execute()
+      const configPath = join(homeDir, ".config", "opencode", "opencode.json")
+      const configText = await Bun.file(configPath).text()
 
-    const output = await plugin.tool.workflow_install.execute()
-
-    expect(output).toContain("projectWorkflowConfigFile")
-    expect(output).toContain("opencodeConfigFile")
-    expect(output).toContain("pluginEntry")
-
-    await rm(dir, { recursive: true, force: true })
+      expect(output).toContain("projectWorkflowConfigFile")
+      expect(output).toContain("opencodeConfigFile")
+      expect(output).toContain("pluginEntry")
+      expect(output).toContain("@fkqfkq123/opencode-autopilot")
+      expect(configText).toContain("@fkqfkq123/opencode-autopilot")
+      expect(configText).not.toContain("workflow-plugin-install")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(homeDir, { recursive: true, force: true })
+    }
   })
 
   it("exposes autopilot_update tool", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "workflow-plugin-update-home-"))
     const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-update-"))
-    const plugin = await workflowPlugin({ directory: dir })
-
-    expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
-
-    await rm(dir, { recursive: true, force: true })
+    try {
+      await mkdir(join(dir, ".workflow-harness"), { recursive: true })
+      await Bun.write(join(dir, ".workflow-harness", "autopilot.json"), JSON.stringify({ skillRoots: [] }, null, 2))
+      await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
+      await Bun.write(join(homeDir, ".config", "opencode", "opencode.json"), JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2))
+      const plugin = await workflowPlugin({ directory: dir, homeDir })
+      expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(homeDir, { recursive: true, force: true })
+    }
   })
 
   it("rejects workflow commands with an empty workflowId", async () => {

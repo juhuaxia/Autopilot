@@ -114,6 +114,9 @@ async function main(): Promise<void> {
     const result = await runWorkflowInstall({
       cwd: process.cwd(),
       homeDir: homedir(),
+      options: {
+        pluginEntry: "@fkqfkq123/opencode-autopilot",
+      },
     })
     console.log(formatWorkflowInstallResult(result))
     return

@@ -120,8 +120,9 @@ describe("autopilot updater", () => {
     const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-"))
     const home = join(root, "home")
     const repo = join(root, "repo")
-    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    const packageRoot = join(home, ".cache", "opencode", "packages", "@fkqfkq123", "opencode-autopilot@latest", "node_modules", "@fkqfkq123", "opencode-autopilot")
     await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
     await mkdir(packageRoot, { recursive: true })
     await writeFile(join(repo, "package.json"), JSON.stringify({ version: "9.9.9" }, null, 2))
     await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.1.9" }, null, 2))
@@ -154,8 +155,9 @@ describe("autopilot updater", () => {
     const root = await mkdtemp(join(tmpdir(), "autopilot-update-package-current-"))
     const home = join(root, "home")
     const repo = join(root, "repo")
-    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    const packageRoot = join(home, ".cache", "opencode", "packages", "@fkqfkq123", "opencode-autopilot@latest", "node_modules", "@fkqfkq123", "opencode-autopilot")
     await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
     await mkdir(packageRoot, { recursive: true })
     await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.1.10" }, null, 2))
     await writeFile(
@@ -184,9 +186,10 @@ describe("autopilot updater", () => {
     const root = await mkdtemp(join(tmpdir(), "autopilot-update-mixed-entries-"))
     const home = join(root, "home")
     const repo = join(root, "repo")
-    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    const packageRoot = join(home, ".cache", "opencode", "packages", "@fkqfkq123", "opencode-autopilot@latest", "node_modules", "@fkqfkq123", "opencode-autopilot")
     const staleRoot = join(root, "stale", "dist")
     await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
     await mkdir(packageRoot, { recursive: true })
     await mkdir(staleRoot, { recursive: true })
     await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.2.5" }, null, 2))
@@ -219,6 +222,44 @@ describe("autopilot updater", () => {
     ])
     expect(result.ignoredPluginEntries).toEqual([`file://${join(staleRoot, "plugin.js")}`])
     expect(result.latestVersion).toBe("0.2.5")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("does not mark unrelated plugins as ignored autopilot entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-unrelated-plugin-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const packageRoot = join(home, ".cache", "opencode", "packages", "@fkqfkq123", "opencode-autopilot@latest", "node_modules", "@fkqfkq123", "opencode-autopilot")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.2.5" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({
+        plugin: [
+          "@fkqfkq123/opencode-autopilot",
+          "other-plugin",
+        ],
+      }, null, 2),
+    )
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestPackageVersion: async () => "0.2.5",
+        fetchLatestReleaseVersion: async () => "0.2.5",
+      },
+    })
+
+    expect(result.mode).toBe("package")
+    expect(result.detectedPluginEntries).toEqual([
+      "@fkqfkq123/opencode-autopilot",
+      "other-plugin",
+    ])
+    expect(result.ignoredPluginEntries).toEqual([])
 
     await rm(root, { recursive: true, force: true })
   })

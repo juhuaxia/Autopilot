@@ -2,7 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
-# [0.2.5] - 2026-05-14
+## [0.2.6] - 2026-05-14
+
+### Changed
+
+- `workflow_install` now registers the npm package entry consistently across CLI and plugin tool flows instead of defaulting to workspace-local `file://dist/plugin.js` paths.
+- `autopilot_update` package-mode detection now reads the actual OpenCode package cache version before falling back to local repo `node_modules`.
+- Updater diagnostics now distinguish detected Autopilot entries from unrelated plugins and surface stale ignored Autopilot entries more clearly.
+
+### Fixed
+
+- Fixed repeated OpenCode config pollution from stale `workflow-plugin-install-*` temp plugin entries.
+- Fixed installer cleanup so dead temporary Autopilot file entries are removed even after the temp directories are gone.
+- Fixed plugin tool install/update tests so they no longer mutate the maintainer's real `HOME` config.
+
+### Verification
+
+- Full test suite passes.
+- Typecheck passes.
+
+## [0.2.5] - 2026-05-14
 
 ### Added
 

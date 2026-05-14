@@ -78,6 +78,38 @@ describe("workflow installer", () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it("removes stale deleted workflow-plugin-install temp entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workflow-install-stale-temp-entry-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({
+        plugin: [
+          `file://${join(root, "workflow-plugin-install-dead", "dist", "plugin.js")}`,
+          "other-plugin",
+        ],
+      }, null, 2),
+    )
+
+    const result = await runWorkflowInstall({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        pluginEntry: "@fkqfkq123/opencode-autopilot",
+      },
+    })
+    const opencodeJson = JSON.parse(await readFile(join(home, ".config", "opencode", "opencode.json"), "utf8")) as { plugin?: string[] }
+
+    expect(result.ok).toBe(true)
+    expect(opencodeJson.plugin).toEqual(["other-plugin", "@fkqfkq123/opencode-autopilot"])
+
+    await rm(root, { recursive: true, force: true })
+  })
+
   it("fails safely when existing opencode config is not valid json", async () => {
     const root = await mkdtemp(join(tmpdir(), "workflow-install-invalid-json-"))
     const home = join(root, "home")
@@ -130,6 +162,28 @@ describe("workflow installer", () => {
 
     expect(result.ok).toBe(true)
     expect(result.warnings.some((warning) => warning.includes("Both opencode.json and opencode.jsonc exist"))).toBe(true)
+
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("supports installing with an explicit npm package plugin entry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workflow-install-package-entry-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(repo, { recursive: true })
+
+    const result = await runWorkflowInstall({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        pluginEntry: "@fkqfkq123/opencode-autopilot",
+      },
+    })
+    const opencodeJson = JSON.parse(await readFile(join(home, ".config", "opencode", "opencode.json"), "utf8")) as { plugin?: string[] }
+
+    expect(result.ok).toBe(true)
+    expect(result.pluginEntry).toBe("@fkqfkq123/opencode-autopilot")
+    expect(opencodeJson.plugin).toEqual(["@fkqfkq123/opencode-autopilot"])
 
     await rm(root, { recursive: true, force: true })
   })

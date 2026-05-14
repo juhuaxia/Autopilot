@@ -14,6 +14,7 @@ export type WorkflowInstallResult = {
 
 export type WorkflowInstallOptions = {
   pluginEntryFile?: string
+  pluginEntry?: string
 }
 
 export function stripJsonComments(input: string): string {
@@ -45,8 +46,16 @@ export async function resolveOpencodeConfigFile(opencodeConfigDir: string): Prom
   return { filePath: jsonFile, warnings }
 }
 
-async function isAutopilotPluginEntry(entry: string): Promise<boolean> {
+function looksLikeAutopilotTempInstallEntry(entry: string): boolean {
+  return entry.startsWith("file://") && entry.includes("workflow-plugin-install-") && entry.endsWith("/dist/plugin.js")
+}
+
+export async function isAutopilotPluginEntry(entry: string): Promise<boolean> {
   if (entry === "@fkqfkq123/opencode-autopilot") {
+    return true
+  }
+
+  if (looksLikeAutopilotTempInstallEntry(entry)) {
     return true
   }
 
@@ -92,7 +101,7 @@ export async function runWorkflowInstall(args: {
   const opencodeConfigDir = join(args.homeDir, ".config", "opencode")
   const globalAutopilotConfigFile = join(opencodeConfigDir, AUTOPILOT_CONFIG_FILENAME)
   const pluginEntryFile = args.options?.pluginEntryFile ?? "dist/plugin.js"
-  const pluginEntry = `file://${join(repoRoot, pluginEntryFile)}`
+  const pluginEntry = args.options?.pluginEntry ?? `file://${join(repoRoot, pluginEntryFile)}`
   const configResolution = await resolveOpencodeConfigFile(opencodeConfigDir)
   const opencodeConfigFile = join(opencodeConfigDir, "opencode.json")
   const warnings: string[] = [...configResolution.warnings]
