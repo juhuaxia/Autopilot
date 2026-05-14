@@ -9,6 +9,7 @@ import type { SubtaskTracker } from "../subtasks/subtask-tracker"
 import type { WorkflowEventStore } from "../events/workflow-event-store"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { ResolvedWorkflowConfig } from "../config/workflow-config"
+import type { ImageSummaryService } from "../images/image-summary-service"
 
 export interface WorkflowEngine {
   tick(workflowId: string): Promise<void>
@@ -27,4 +28,5 @@ export interface WorkflowEngineDeps {
   workspace: WorkflowWorkspace
   resolvedConfig?: ResolvedWorkflowConfig
   skillRegistry?: Map<string, string>
+  imageSummaryService: ImageSummaryService
 }

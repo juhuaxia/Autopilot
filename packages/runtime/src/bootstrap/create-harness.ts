@@ -11,6 +11,7 @@ import { FileSystemArtifactEvaluator } from "../artifacts/file-system-artifact-e
 import { DefaultAttachService } from "../attach/attach-service"
 import { buildSkillRegistryWithWarnings } from "../config/skill-registry"
 import { ensureAutopilotConfigFile, resolveWorkflowConfig, AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
+import { NoopImageSummaryService, VisionModelImageSummaryService, type ImageSummaryService } from "../images/image-summary-service"
 import { DefaultWorkflowEngine } from "../engine/default-workflow-engine"
 import { FileSystemWorkflowEventStore } from "../events/file-system-workflow-event-store"
 import { BasicRecoveryClassifier } from "../recovery/basic-recovery-classifier"
@@ -28,6 +29,7 @@ export interface CreateHarnessOptions {
   opencodeBaseUrl?: string
   opencodePassword?: string
   homeDir?: string
+  imageSummaryService?: ImageSummaryService
 }
 
 export async function createHarness(baseDir: string, options: CreateHarnessOptions = {}) {
@@ -53,6 +55,8 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
     ?? (httpOptions
       ? new HttpOpencodeSessionClient(httpOptions)
       : new InMemoryOpencodeSessionClient())
+  const imageSummaryService = options.imageSummaryService
+    ?? buildDefaultImageSummaryService()
   const stateStore = new FileSystemWorkflowStateStore(workspace)
   const humanActionStore = new FileSystemHumanActionStore(workspace)
   const artifactEvaluator = new FileSystemArtifactEvaluator(workspace)
@@ -72,6 +76,7 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
     workspace,
     resolvedConfig,
     skillRegistry,
+    imageSummaryService,
   })
   tickScheduler.setHandler((workflowId) => engine.tick(workflowId))
   const sessionActivityMonitor = new DefaultSessionActivityMonitor(
@@ -110,5 +115,23 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
     workspace,
     resolvedConfig,
     skillRegistry,
+    imageSummaryService,
   }
+}
+
+function buildDefaultImageSummaryService(): ImageSummaryService {
+  const baseUrl = process.env.AUTOPILOT_IMAGE_SUMMARY_BASE_URL?.trim()
+  const apiKey = process.env.AUTOPILOT_IMAGE_SUMMARY_API_KEY?.trim()
+  const model = process.env.AUTOPILOT_IMAGE_SUMMARY_MODEL?.trim()
+
+  if (baseUrl && apiKey && model) {
+    return new VisionModelImageSummaryService({
+      baseUrl,
+      apiKey,
+      model,
+      timeoutMs: 300_000,
+    })
+  }
+
+  return new NoopImageSummaryService()
 }
