@@ -93,6 +93,48 @@ Autopilot 使用两个配置文件：
 
 两个文件同时存在时，配置会**合并**（项目级覆盖/补充全局级）。如果都不存在，Autopilot 在首次运行时自动创建一份带默认值的配置。**也就是说，不配任何东西也能直接用。**
 
+### 显式 `@read(...)` 读取源
+
+Autopilot 支持在 workflow-open 请求中显式声明读取目标。
+
+例如：
+
+```text
+请使用 @read(docs/acceptance.md) 作为验收标准来源。
+购买页面的 “video generate” 标题下，增加 @read(local_docs/figma_md/17786586547155.png) 中的内容。
+```
+
+规则：
+
+- `@read(...)` 只在 **需求精炼** 和 **制定计划** 阶段生效。
+- 普通路径如果没有 `@read(...)`，不会被自动读取。
+- 文本类目标（`.md`, `.txt`, `.rst`, `.adoc`）会直接读取内容并注入 workflow 输入。
+- 图片类目标（`.png`, `.jpg`, `.jpeg`, `.webp`）会走图片摘要服务。
+
+### 图片摘要服务行为
+
+图片 `@read(...)` 只有在配置了 OpenAI 兼容视觉服务时，才会真正生成摘要。环境变量如下：
+
+```bash
+export AUTOPILOT_IMAGE_SUMMARY_BASE_URL="https://your-openai-compatible-endpoint"
+export AUTOPILOT_IMAGE_SUMMARY_API_KEY="your-api-key"
+export AUTOPILOT_IMAGE_SUMMARY_MODEL="your-vision-model"
+```
+
+配置后：
+
+- 每次请求最多读取 **5** 张显式图片
+- 并发度为 **2**
+- 单张图片超时 **5 分钟**
+- 成功时会把 `READ_TARGET_IMAGE_SUMMARY` 注入 refinement / plan 输入
+
+未配置时：
+
+- 系统会退回到 `NoopImageSummaryService`
+- 注入 `READ_TARGET_IMAGE_ERROR`
+- 不阻塞 workflow
+- 不会编造图片内容
+
 ### autopilot.json 完整示例
 
 下面是一份完整的配置文件，每项都有注释说明：

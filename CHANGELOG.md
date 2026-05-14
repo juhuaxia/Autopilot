@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-05-14
+
+### Added
+
+- Added explicit `@read(...)` requirement-ingestion support for refinement and plan phases.
+- Added structured `readTargets`, `textReadTargets`, and `imageReadTargets` handling to workflow-open request parsing.
+- Added text read-target ingestion so `@read(path-to-text-doc)` injects actual document content into refinement/plan input.
+- Added image read-target execution via `ImageSummaryService` abstraction.
+- Added `VisionModelImageSummaryService` for OpenAI-compatible vision APIs.
+- Added bounded image read processing:
+  - maximum 5 explicit image read targets
+  - concurrency limit of 2
+  - 5 minute timeout per image
+  - summary condensation when prompt budget would be exceeded
+
+### Changed
+
+- Refinement and plan prompts now treat `@read(...)` references as explicit source material.
+- Image `@read(...)` targets now attempt summary generation when an external vision service is configured.
+
+### Fallback behavior
+
+- If no image-capable service is configured, image `@read(...)` produces explicit `READ_TARGET_IMAGE_ERROR` output instead of blocking the workflow.
+- Image-read failures do not stop refinement/plan progression and do not invent missing image content.
+
+### Verification
+
+- Typecheck passes.
+- Build passes.
+- `@read(...)` parsing, updater diagnostics, workflow recovery, and observability regression tests pass.
+
 ## [0.2.0] - 2026-05-13
 
 ### Added

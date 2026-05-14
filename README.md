@@ -95,6 +95,48 @@ Autopilot creates/uses two configuration files:
 
 When both exist, they **merge** — project settings are added on top of global ones. If neither file exists, Autopilot creates `autopilot.json` with sensible defaults on first run. **You don't need to configure anything to get started.**
 
+### Explicit `@read(...)` sources
+
+Autopilot supports explicit read targets inside workflow-open requests.
+
+Examples:
+
+```text
+Please use @read(docs/acceptance.md) for the acceptance criteria.
+Add the content from @read(local_docs/figma_md/17786586547155.png) under the "video generate" section.
+```
+
+Rules:
+
+- `@read(...)` is only consumed during **refinement** and **plan**.
+- Plain file paths without `@read(...)` are **not** automatically read.
+- Text targets (`.md`, `.txt`, `.rst`, `.adoc`) are read directly and injected into the workflow input.
+- Image targets (`.png`, `.jpg`, `.jpeg`, `.webp`) go through the image summary service.
+
+### Image summary service behavior
+
+Image `@read(...)` targets only produce summaries when an OpenAI-compatible vision service is configured through environment variables:
+
+```bash
+export AUTOPILOT_IMAGE_SUMMARY_BASE_URL="https://your-openai-compatible-endpoint"
+export AUTOPILOT_IMAGE_SUMMARY_API_KEY="your-api-key"
+export AUTOPILOT_IMAGE_SUMMARY_MODEL="your-vision-model"
+```
+
+When configured:
+
+- Autopilot reads at most **5** explicit image targets per request
+- processes them with concurrency **2**
+- uses a per-image timeout of **5 minutes**
+- injects `READ_TARGET_IMAGE_SUMMARY` blocks into refinement/plan input
+
+When not configured:
+
+- Autopilot falls back to `NoopImageSummaryService`
+- injects `READ_TARGET_IMAGE_ERROR` instead of a summary
+- does **not** block the workflow
+- does **not** invent image content
+
 ### The autopilot.json file
 
 Here's what a complete configuration looks like, with explanations inline:
