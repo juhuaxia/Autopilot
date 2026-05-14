@@ -74,6 +74,19 @@ async function buildStatusEnhancements(args: {
     lines.push(`Status before dispatch: ${storedSession.lastStatusBeforeDispatch}`)
   }
 
+  if (runtime?.startMode === "direct-develop") {
+    lines.push("Workflow start: direct-develop")
+  }
+  if ((runtime?.skippedPhases?.length ?? 0) > 0) {
+    lines.push(`Skipped setup phases: ${runtime?.skippedPhases?.join(" -> ")}`)
+  }
+  if (runtime?.outOfBandEditsDetected) {
+    lines.push("Resync note: workflow observed out-of-band code edits")
+  }
+  if (runtime?.resyncedFromPhase) {
+    lines.push(`Resynced from phase: ${runtime.resyncedFromPhase}`)
+  }
+
   if (evaluation.missing.length > 0) {
     lines.push(`Missing signals: ${evaluation.missing.join(" | ")}`)
   }
@@ -433,6 +446,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             stateStore: harness.stateStore,
             artifactEvaluator: harness.artifactEvaluator,
             userRequest: openRequest.userRequest,
+            ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
           })
           if (foregroundSessionId) {
             await harness.stateStore.updateRuntime(targetId, {
@@ -527,6 +541,14 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         })
       }
       await harness.humanActionService.resume(workflowId, resumeDecision)
+      await harness.attachService.attach(workflowId)
+    } else if (command === "workflow-resync") {
+      if (foregroundSessionId) {
+        await harness.stateStore.updateRuntime(workflowId, {
+          preferredForegroundSessionId: foregroundSessionId,
+        })
+      }
+      await harness.humanActionService.resync(workflowId)
       await harness.attachService.attach(workflowId)
     } else if (command === "workflow-back") {
       await harness.sessionActivityMonitor.stop(workflowId)

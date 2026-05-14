@@ -91,6 +91,7 @@ Responsibilities:
 - Prefer workflow_attach to continue an existing workflow. Use workflow_status mainly when you need a fresh read without driving continuation.
 - Follow runtime output strictly. If Recommended tool / payload is present, use it instead of inventing a phase jump.
 - Use workflow_answer, workflow_approve, and workflow_resume only when the runtime asks for human action.
+- Use workflow_resync when the user edited code outside the workflow and wants review/test to re-check the current worktree.
 - If workflow_open returns a clarification question, STOP and ask the user that question. Do not call workflow_status or other workflow tools until the user answers.
 - When a workflow tool returns a structured workflow block, preserve and show the full block to the user. Do not compress it into a one-line summary unless the user explicitly asks for a summary.
 - If the workflow is in progress and the runtime output recommends workflow_attach, continue with workflow_attach instead of stopping at workflow_status.
@@ -418,6 +419,13 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
           payload: z.string().optional().describe("Optional JSON string payload for blocked decisions, for example {\"decision\":\"fix\"}."),
         },
         execute: async (args: { workflowId: string; payload?: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resume", args.workflowId, args.payload, context?.sessionID),
+      },
+      workflow_resync: {
+        description: "Re-sync a review/test workflow with out-of-band code edits and rerun the current phase.",
+        args: {
+          workflowId: workflowIdSchema,
+        },
+        execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resync", args.workflowId, undefined, context?.sessionID),
       },
       workflow_back: {
         description: "Leave the workflow channel without stopping the workflow.",

@@ -83,6 +83,29 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("supports workflow-open startAt develop shortcut via structured payload", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-direct-develop-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-direct-develop",
+      payload: JSON.stringify({
+        prompt: "直接进入 develop 处理一个很小的文案修复。",
+        startAt: "develop",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Phase: develop")
+    expect(result.output).toContain("Workflow start: direct-develop")
+    expect(result.output).toContain("Skipped setup phases: spec_refinement -> plan")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("does not perform local regex extraction for unlabeled natural-language docs", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-multi-docs-"))
     const harness = await createHarness(baseDir)
@@ -324,6 +347,54 @@ describe("workflow command runner", () => {
     }
   })
 
+  it("resyncs a blocked review workflow and reruns review by default", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-resync-review-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-resync-review"
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "验证 review resync 默认重跑当前阶段。",
+      })
+      await harness.sessionActivityMonitor.start(workflowId)
+      await harness.tickScheduler.requestTick(workflowId, "workflow started")
+      await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+      await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review resync 后默认重跑 review。" })
+      await harness.tickScheduler.requestTick(workflowId, "enter plan")
+      await harness.humanActionService.approve(workflowId)
+      await harness.tickScheduler.requestTick(workflowId, "enter develop")
+      await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+      await harness.tickScheduler.requestTick(workflowId, "develop complete")
+      await harness.artifactEvaluator.setReviewReport(workflowId, "fail", false)
+      await harness.tickScheduler.requestTick(workflowId, "review failed")
+
+      const blockedBefore = await runner.run({
+        harness,
+        command: "workflow-status",
+        workflowId,
+      })
+      expect(blockedBefore.output).toContain("Phase: review")
+      expect(blockedBefore.output).toContain("Status: waiting_human")
+
+      const resyncResult = await runner.run({
+        harness,
+        command: "workflow-resync",
+        workflowId,
+      })
+
+      expect(resyncResult.output).toContain("Phase: review")
+      expect(resyncResult.output).toContain("Status: in_progress")
+      expect(resyncResult.output).toContain("Resync note: workflow observed out-of-band code edits")
+      expect(resyncResult.output).toContain("Resynced from phase: review")
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it("shows plan approval preview and done completion feedback", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-approval-preview-"))
     const harness = await createHarness(baseDir)
@@ -384,7 +455,7 @@ describe("workflow command runner", () => {
 
     const doneStatus = await runner.run({
       harness,
-      command: "workflow-status",
+      command: "workflow-attach",
       workflowId,
     })
 

@@ -18,6 +18,7 @@ const WORKFLOW_CHANNEL_COMMANDS = new Set([
   "workflow-answer",
   "workflow-approve",
   "workflow-resume",
+  "workflow-resync",
   "workflow-back",
 ])
 
@@ -35,6 +36,8 @@ function normalizeCommand(command: string): string {
       return "approve"
     case "workflow-resume":
       return "resume"
+    case "workflow-resync":
+      return "resync"
     case "workflow-back":
       return "back"
     case "workflow-doctor":
@@ -104,7 +107,7 @@ async function main(): Promise<void> {
   const normalizedCommand = command ? normalizeCommand(command) : command
 
   if (!normalizedCommand) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "install") {
@@ -143,7 +146,7 @@ async function main(): Promise<void> {
   const commandRunner = new DefaultWorkflowCommandRunner()
 
   if (!workflowId) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "start") {
@@ -182,7 +185,20 @@ async function main(): Promise<void> {
   } else if (normalizedCommand === "approve") {
     await harness.humanActionService.approve(workflowId)
   } else if (normalizedCommand === "resume") {
-    await harness.humanActionService.resume(workflowId)
+    let decision: "fix" | "accept" | undefined
+    if (payload) {
+      try {
+        const parsed = JSON.parse(payload) as { decision?: unknown }
+        if (parsed.decision === "fix" || parsed.decision === "accept") {
+          decision = parsed.decision
+        }
+      } catch {
+        decision = undefined
+      }
+    }
+    await harness.humanActionService.resume(workflowId, decision)
+  } else if (normalizedCommand === "resync") {
+    await harness.humanActionService.resync(workflowId)
   } else {
     throw new Error(`Unknown command: ${command}`)
   }

@@ -37,6 +37,7 @@ describe("workflow plugin tool export", () => {
     expect(typeof plugin.tool.workflow_answer.execute).toBe("function")
     expect(typeof plugin.tool.workflow_approve.execute).toBe("function")
     expect(typeof plugin.tool.workflow_resume.execute).toBe("function")
+    expect(typeof plugin.tool.workflow_resync.execute).toBe("function")
     expect(typeof plugin.tool.workflow_back.execute).toBe("function")
     expect(typeof plugin.tool.workflow_doctor.execute).toBe("function")
     expect(typeof plugin.tool.workflow_install.execute).toBe("function")

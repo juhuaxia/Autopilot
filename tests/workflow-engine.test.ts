@@ -257,6 +257,92 @@ describe("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("reruns review after workflow resync instead of continuing stale blocked state", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-resync"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review resync 默认重跑当前阶段。",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review resync 后默认重跑 review。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.artifactEvaluator.setReviewReport(workflowId, "fail", false)
+    await harness.tickScheduler.requestTick(workflowId, "review failed")
+
+    let workflow = await harness.stateStore.getWorkflow(workflowId)
+    let runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.phase).toBe("review")
+    expect(workflow?.status).toBe("waiting_human")
+    expect(runtime?.phaseDispatchAttempts?.review).toBe(0)
+
+    await harness.humanActionService.resync(workflowId)
+
+    workflow = await harness.stateStore.getWorkflow(workflowId)
+    runtime = await harness.stateStore.getRuntime(workflowId)
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId
+      ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId)
+      : null
+
+    expect(workflow?.phase).toBe("review")
+    expect(workflow?.status).toBe("in_progress")
+    expect(runtime?.outOfBandEditsDetected).toBe(true)
+    expect(runtime?.resyncedFromPhase).toBe("review")
+    expect(runtime?.resyncCount).toBe(1)
+    expect(runtime?.phaseDispatchAttempts?.review).toBe(1)
+    expect(stored?.lastPrompt).toContain("[PHASE] review")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("builds direct-develop context from the current request instead of default MVP plan content", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-direct-develop-context"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "更改商品列表页排序文案并调整主按钮颜色。",
+      startAt: "develop",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "direct develop start")
+
+    const planFile = await readFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      "utf8",
+    )
+    const developFile = await readFile(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      "utf8",
+    )
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId
+      ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId)
+      : null
+
+    expect(planFile).toContain("更改商品列表页排序文案并调整主按钮颜色")
+    expect(planFile).not.toContain("构建 workflow harness MVP")
+    expect(developFile).toContain("更改商品列表页排序文案并调整主按钮颜色")
+    expect(developFile).not.toContain("新增 session client adapter")
+    expect(stored?.lastPrompt).toContain("更改商品列表页排序文案并调整主按钮颜色")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("injects requiredSkills into develop and test phase prompts", async () => {
     const skillRoot = await mkdtemp(join(tmpdir(), "workflow-phase-skills-"))
     await Bun.write(join(skillRoot, "frontend-design.md"), "# frontend-design\nUse existing components first.\n")

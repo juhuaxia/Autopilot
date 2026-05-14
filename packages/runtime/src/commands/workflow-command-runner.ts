@@ -8,6 +8,7 @@ export type WorkflowChannelCommand =
   | "workflow-answer"
   | "workflow-approve"
   | "workflow-resume"
+  | "workflow-resync"
   | "workflow-back"
 
 export interface WorkflowCommandResult {

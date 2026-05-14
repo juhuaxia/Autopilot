@@ -63,9 +63,9 @@ function exactAction(record: HumanActionRecord): string {
   }
   if (record.action.type === "blocked") {
     if (record.action.allowedDecisions?.includes("fix") || record.action.allowedDecisions?.includes("accept")) {
-      return `Run: bun run src/cli.ts resume ${record.workflowId} '{"decision":"fix"}'`
+      return `Run: bun run src/cli.ts resume ${record.workflowId} '{"decision":"fix"}' or bun run src/cli.ts resync ${record.workflowId}`
     }
-    return `Run: bun run src/cli.ts resume ${record.workflowId}`
+    return `Run: bun run src/cli.ts resume ${record.workflowId} or bun run src/cli.ts resync ${record.workflowId}`
   }
   return "No action required"
 }
@@ -78,7 +78,7 @@ function recommendedTool(record: HumanActionRecord): string {
     return "workflow_approve"
   }
   if (record.action.type === "blocked") {
-    return "workflow_resume"
+    return "workflow_resume or workflow_resync"
   }
   return "workflow_status"
 }
@@ -139,6 +139,18 @@ export function renderHumanActionBlock(args: {
 
   if (runtime?.recoveryState === "recovering") {
     lines.push("Recovery: in progress")
+  }
+  if (runtime?.startMode === "direct-develop") {
+    lines.push("Start mode: direct-develop")
+  }
+  if ((runtime?.skippedPhases?.length ?? 0) > 0) {
+    lines.push(`Skipped phases: ${runtime?.skippedPhases?.join(", ")}`)
+  }
+  if (runtime?.outOfBandEditsDetected) {
+    lines.push("Resync state: out-of-band edits detected")
+  }
+  if (runtime?.resyncedFromPhase) {
+    lines.push(`Last resync phase: ${runtime.resyncedFromPhase}`)
   }
 
   if (clarification) {

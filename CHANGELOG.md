@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.2.5] - 2026-05-14
+
+### Added
+
+- Added autopilot private inline directives for chat-style workflow control:
+  - `/ap-doc:`
+  - `/ap-start-at:`
+- Added direct-develop workflow initialization that preserves request-aligned phase context.
+- Added `workflow_resync` recovery flow for review/test workflows paused after out-of-band edits.
+
+### Changed
+
+- Direct-develop workflows now build synthetic phase baselines from the current request instead of using unrelated default MVP templates.
+- `/ap-doc:` is now treated as explicit workflow intent and no longer triggers an extra clarification round.
+- Recovery now reruns the current phase from a fresh baseline instead of continuing stale conclusions.
+
+### Fixed
+
+- Fixed direct-develop review/test context leakage from the default template artifacts.
+- Fixed `/ap-doc:`-only inputs being misclassified as ambiguous document mentions.
+
+### Verification
+
+- Typecheck passes.
+- Workflow directive parsing, direct-develop, and resync regression tests pass.
+
 ## [0.2.4] - 2026-05-14
 
 ### Added

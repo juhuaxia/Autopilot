@@ -84,6 +84,65 @@ If Review finds issues, the workflow loops back to Build automatically (up to 3 
 
 If a develop/review/test session appears to finish but the current phase artifact is still unchanged from its template, Autopilot performs one extra **artifact-only repair** dispatch before escalating to human action. That dispatch is limited to updating the artifact only — it must not continue modifying application code.
 
+## Chat-style Autopilot directives
+
+Autopilot supports a small set of private inline directives inside normal chat input. These are parsed by Autopilot itself; they are **not** OpenCode host slash commands.
+
+Supported directives:
+
+```text
+/ap-doc: docs/requirement.md
+/ap-start-at: develop
+```
+
+Examples:
+
+```text
+1. Update the product list copy
+2. Change the primary button color
+/ap-doc: docs/requirement.md
+/ap-start-at: develop
+```
+
+```text
+/ap-doc: local_docs/figma_md/page.md
+```
+
+Rules:
+
+- `/ap-doc:` adds an explicit workflow reference document and reads it into the workflow-open request.
+- `/ap-start-at: develop` explicitly skips refinement and plan, then starts a new workflow directly in `develop`.
+- These directives must be written as standalone lines.
+- Plain prose like `startAt: develop` is treated as normal text and is **not** interpreted as a control directive.
+- A direct-develop workflow still keeps review/test guardrails and records that refinement/plan were skipped.
+
+## Workflow recovery
+
+When you change code outside the workflow while it is paused in `review` or `test`, use `workflow_resync` to realign workflow state with the current worktree.
+
+Behavior:
+
+- `workflow_resync` is a dedicated recovery command/tool.
+- It currently supports workflows paused in `review` or `test` only.
+- It resets the current phase artifact to a fresh rerun baseline and re-dispatches that same phase.
+- The default behavior is to rerun the current phase, not to continue from the old conclusion.
+
+Example recovery flow:
+
+```text
+1. Workflow pauses in review or test.
+2. You manually fix code outside the workflow.
+3. Re-attach or inspect status if needed.
+4. Run workflow_resync for the same workflowId.
+5. Autopilot rebuilds the current phase baseline and reruns that phase.
+```
+
+Typical use:
+
+```text
+workflow_status -> workflow_resync -> workflow_attach
+```
+
 ## Configuration
 
 Autopilot creates/uses two configuration files:

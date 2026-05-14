@@ -11,6 +11,8 @@ const DOC_EXTENSIONS = [".md", ".markdown", ".txt", ".rst", ".adoc", ".pdf", ".d
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 const COMMON_DOC_DIRS = ["docs", "doc", "spec", "specs", "design", "prd", "product", "requirements"]
 const READ_TARGET_PATTERN = /@read\(([^)]+)\)/g
+const AP_START_AT_PATTERN = /^\s*\/ap-start-at\s*:\s*(develop)\s*$/i
+const AP_DOC_PATTERN = /^\s*\/ap-doc\s*:\s*(.+?)\s*$/i
 
 type ReadTargetKind = "text" | "image" | "unknown"
 
@@ -18,6 +20,7 @@ type WorkflowOpenRequestJson = {
   prompt?: string
   docPaths?: string[]
   projectContext?: string
+  startAt?: "develop"
 }
 
 /**
@@ -38,6 +41,7 @@ export type ContinuationIntent = {
 export interface WorkflowOpenRequest {
   userRequest: string
   prompt: string
+  startAt?: "develop"
   docPaths: string[]
   readTargets: Array<{ raw: string; path: string; kind: ReadTargetKind }>
   textReadTargets: Array<{ path: string; content: string }>
@@ -97,7 +101,56 @@ function extractReadTargets(value: string): Array<{ raw: string; path: string; k
 const normalizeDocumentLikeInput = (value: string): string =>
   value.trim().replace(/^文档\s*[:：]?\s*/i, "")
 
+const isAutopilotDirectiveLine = (value: string): boolean =>
+  AP_START_AT_PATTERN.test(value.trim()) || AP_DOC_PATTERN.test(value.trim())
+
+function extractNaturalLanguageDirectives(rawPayload: string): {
+  prompt: string
+  docPaths: string[]
+  startAt?: "develop"
+  hasExplicitAutopilotDirective: boolean
+} {
+  const docPaths: string[] = []
+  let startAt: "develop" | undefined
+  let hasExplicitAutopilotDirective = false
+  const prompt = rawPayload
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim()
+      const startAtMatch = trimmed.match(AP_START_AT_PATTERN)
+      if (startAtMatch?.[1]?.toLowerCase() === "develop") {
+        startAt = "develop"
+        hasExplicitAutopilotDirective = true
+        return ""
+      }
+
+      const docMatch = trimmed.match(AP_DOC_PATTERN)
+      if (docMatch?.[1]) {
+        const normalizedPath = docMatch[1].trim()
+        if (normalizedPath && hasDocExtension(normalizedPath)) {
+          docPaths.push(normalizedPath)
+          hasExplicitAutopilotDirective = true
+          return ""
+        }
+      }
+
+      return trimmed.replace(/^[,，;；]+|[,，;；]+$/g, "")
+    })
+    .filter((line) => line.length > 0)
+    .join("\n")
+
+  return {
+    prompt,
+    docPaths: [...new Set(docPaths)],
+    hasExplicitAutopilotDirective,
+    ...(startAt ? { startAt } : {}),
+  }
+}
+
 const looksLikeDocumentReference = (value: string): boolean => {
+  if (isAutopilotDirectiveLine(value)) {
+    return false
+  }
   const normalized = normalizeDocumentLikeInput(value)
   if (!normalized) {
     return false
@@ -129,8 +182,11 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
     const docPaths = Array.isArray((parsed as { docPaths?: unknown }).docPaths)
       ? (parsed as { docPaths: unknown[] }).docPaths.filter((item): item is string => typeof item === "string")
       : undefined
+    const startAt = (parsed as { startAt?: unknown }).startAt === "develop"
+      ? "develop"
+      : undefined
 
-    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined
+    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined
     if (!hasKnownKey) {
       return null
     }
@@ -139,6 +195,7 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
       ...(prompt !== undefined ? { prompt } : {}),
       ...(projectContext !== undefined ? { projectContext } : {}),
       ...(docPaths !== undefined ? { docPaths } : {}),
+      ...(startAt !== undefined ? { startAt } : {}),
     }
   } catch {
     return null
@@ -289,17 +346,23 @@ export function detectContinuationIntent(rawPayload: string): ContinuationIntent
   return { rawPayload: trimmed, matchedPattern: matched }
 }
 
-function inferOpenIntent(rawPayload: string, prompt: string, docPaths: string[]): {
+function inferOpenIntent(args: {
+  rawPayload: string
+  prompt: string
+  docPaths: string[]
+  hasExplicitAutopilotDirective: boolean
+}): {
   needsClarification: boolean
   clarificationQuestion?: string
   clarificationOptions?: string[]
 } {
+  const { rawPayload, prompt, docPaths, hasExplicitAutopilotDirective } = args
   const lower = rawPayload.toLowerCase()
   const hasActionHint = actionHints.some((hint) => lower.includes(hint.toLowerCase()))
   const onlyDocLikeInput = docPaths.length > 0 && !hasActionHint && prompt.length < 20
   const explicitDocReference = looksLikeDocumentReference(rawPayload)
 
-  if (explicitDocReference) {
+  if (explicitDocReference || hasExplicitAutopilotDirective) {
     return { needsClarification: false }
   }
 
@@ -330,18 +393,37 @@ export async function buildWorkflowOpenRequestWithOptions(
 ): Promise<WorkflowOpenRequest> {
   const rawPayload = trimToEmpty(payload)
   const structured = rawPayload ? parseStructuredRequest(rawPayload) : null
+  const naturalLanguageDirectives = structured ? null : extractNaturalLanguageDirectives(rawPayload)
+  const explicitDocumentReference = looksLikeDocumentReference(rawPayload)
 
-  const prompt = trimToEmpty(structured?.prompt)
-    || (looksLikeDocumentReference(rawPayload)
-      ? `请基于这份文档启动 workflow。\n${normalizeDocumentLikeInput(rawPayload)}`
-      : rawPayload)
+  const effectivePrompt = trimToEmpty(structured?.prompt)
+    || trimToEmpty(naturalLanguageDirectives?.prompt)
+  let prompt = effectivePrompt
+  if (explicitDocumentReference) {
+    prompt = `请基于这份文档启动 workflow。\n${normalizeDocumentLikeInput(rawPayload)}`
+  } else if (!prompt && (naturalLanguageDirectives?.docPaths.length ?? 0) > 0) {
+    prompt = naturalLanguageDirectives?.startAt === "develop"
+      ? "请基于需求文档直接进入 develop。"
+      : "请基于需求文档启动 workflow。"
+  } else if (!prompt && naturalLanguageDirectives?.startAt === "develop") {
+    prompt = "请直接进入 develop。"
+  } else if (!prompt) {
+    prompt = rawPayload
+  }
   const structuredDocPaths = (structured?.docPaths ?? []).map((item) => item.trim()).filter((item) => item.length > 0)
-  const docPaths = structuredDocPaths
+  const directiveDocPaths = naturalLanguageDirectives?.docPaths ?? []
+  const startAt = structured?.startAt ?? naturalLanguageDirectives?.startAt
+  const docPaths = [...new Set([...structuredDocPaths, ...directiveDocPaths])]
   const shouldRecallCandidates = !structured && docPaths.length === 0
   const candidateDocs = shouldRecallCandidates ? await discoverCandidateDocs(workspaceRoot) : []
   const projectContext = trimToEmpty(structured?.projectContext)
     || undefined
-  const intent = inferOpenIntent(rawPayload, prompt, docPaths)
+  const intent = inferOpenIntent({
+    rawPayload,
+    prompt,
+    docPaths,
+    hasExplicitAutopilotDirective: naturalLanguageDirectives?.hasExplicitAutopilotDirective ?? false,
+  })
   const continuationIntent = detectContinuationIntent(rawPayload)
   const readTargets = extractReadTargets(prompt)
   const textReadTargets: Array<{ path: string; content: string }> = []
@@ -462,6 +544,7 @@ export async function buildWorkflowOpenRequestWithOptions(
   return {
     userRequest: lines.join("\n"),
     prompt,
+    ...(startAt ? { startAt } : {}),
     docPaths,
     readTargets,
     textReadTargets,

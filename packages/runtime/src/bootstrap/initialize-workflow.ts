@@ -8,8 +8,9 @@ export async function initializeWorkflow(args: {
   stateStore: WorkflowStateStore
   artifactEvaluator: FileSystemArtifactEvaluator
   userRequest?: string
+  startAt?: "spec_refinement" | "develop"
 }): Promise<void> {
-  const { workflowId, stateStore, artifactEvaluator, userRequest } = args
+  const { workflowId, stateStore, artifactEvaluator, userRequest, startAt = "spec_refinement" } = args
   const existing = await stateStore.getWorkflow(workflowId)
   if (existing) {
     return
@@ -18,7 +19,7 @@ export async function initializeWorkflow(args: {
   const now = new Date().toISOString()
   const workflow: WorkflowState = {
     workflowId,
-    phase: "spec_refinement",
+    phase: startAt,
     status: "pending",
     approved: false,
     iteration: 0,
@@ -45,9 +46,15 @@ export async function initializeWorkflow(args: {
     reviewArtifactRepairDispatchPending: false,
     testArtifactRepairDispatchPending: false,
     pendingBlockedDecision: null,
+    startMode: startAt === "develop" ? "direct-develop" : "normal",
+    skippedPhases: startAt === "develop" ? ["spec_refinement", "plan"] : [],
+    outOfBandEditsDetected: false,
+    resyncCount: 0,
+    lastResyncedAt: null,
+    resyncedFromPhase: null,
   }
 
   await stateStore.saveWorkflow(workflow)
   await stateStore.saveRuntime(runtime)
-  await artifactEvaluator.ensureDefault(workflowId, userRequest)
+  await artifactEvaluator.ensureDefaultForStartAt(workflowId, userRequest, startAt)
 }

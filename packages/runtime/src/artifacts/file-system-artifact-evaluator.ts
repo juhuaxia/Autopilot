@@ -771,13 +771,64 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     }
   }
 
+  async resetPhaseForResync(workflowId: string, phase: Extract<Phase, "review" | "test">): Promise<void> {
+    if (phase === "review") {
+      const developContent = await this.readPhaseArtifact(workflowId, "develop")
+      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent)
+      await this.updatePhaseState(workflowId, "review", {
+        valid: true,
+        readyForNextPhase: false,
+        summary: "Review report pending routing",
+        reportStatus: "unknown",
+        hasBlockingSeverity: false,
+        missing: [],
+        warnings: [],
+        templateFingerprint: buildTemplateFingerprint(reviewTemplate),
+      })
+      await this.writePhaseArtifact(workflowId, "review", reviewTemplate)
+      return
+    }
+
+    const reviewContent = await this.readPhaseArtifact(workflowId, "review")
+    const testTemplate = this.buildTestArtifactFromReviewContent(reviewContent)
+    await this.updatePhaseState(workflowId, "test", {
+      valid: true,
+      readyForNextPhase: false,
+      summary: "Test report pending routing",
+      reportStatus: "unknown",
+      hasBlockingSeverity: false,
+      missing: [],
+      warnings: [],
+      templateFingerprint: buildTemplateFingerprint(testTemplate),
+    })
+    await this.writePhaseArtifact(workflowId, "test", testTemplate)
+  }
+
   async ensureDefault(workflowId: string, userRequest?: string): Promise<void> {
+    await this.ensureDefaultForStartAt(workflowId, userRequest, "spec_refinement")
+  }
+
+  async ensureDefaultForStartAt(
+    workflowId: string,
+    userRequest: string | undefined,
+    startAt: "spec_refinement" | "develop",
+  ): Promise<void> {
     const existing = await readJsonFile<ArtifactStateFile>(this.workspace.artifactStateFile(workflowId))
     if (existing) {
       return
     }
 
     const normalizedUserRequest = this.normalizeUserRequest(userRequest)
+    const syntheticRefinement = this.buildRefinementArtifact({
+      userRequest: normalizedUserRequest,
+      ...(startAt === "develop"
+        ? {
+            acceptanceAnswer: "Direct-develop workflow: user explicitly skipped refinement and plan. Implement the requested change directly, keep scope tight, and preserve review/test guardrails.",
+          }
+        : {}),
+    })
+    const syntheticPlan = this.buildPlanArtifactFromRefinementContent(syntheticRefinement)
+    const syntheticDevelop = this.buildDevelopArtifactFromPlanContent(syntheticPlan)
     const refinementQuestions = this.buildSpecRefinementQuestionsFromSections({
       sectionBodies: this.defaultSpecSectionBodies(normalizedUserRequest),
       initialRequest: normalizedUserRequest,
@@ -822,78 +873,17 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     await this.writePhaseArtifact(
       workflowId,
       "spec_refinement",
-      this.buildRefinementArtifact({ userRequest: normalizedUserRequest }),
+      syntheticRefinement,
     )
     await this.writePhaseArtifact(
       workflowId,
       "plan",
-      [
-        "# 开发计划",
-        "",
-        "## 需求摘要",
-        "构建 workflow harness MVP。",
-        "",
-        "## 影响范围",
-        "state/runtime/adapter。",
-        "",
-        "## 核心修改文件",
-        "packages/runtime/src/engine/default-workflow-engine.ts",
-        "",
-        "## Cascade Files",
-        "src/cli.ts",
-        "",
-        "## 实现方案",
-        "PhaseTransition + TickScheduler。",
-        "",
-        "## i18n 变更",
-        "无",
-        "",
-        "## API / Route 变更",
-        "无",
-        "",
-        "## 组件复用决策",
-        "无 UI 组件",
-        "",
-        "## Section 验收映射（多 section Figma 页面必填）",
-        "不适用",
-        "",
-        "## Key Visual Elements（复杂 Figma 页面必填）",
-        "不适用",
-        "",
-        "## 疑问清单",
-        "无",
-        "",
-        "## 风险评估",
-        "session / workflow 状态不同步",
-        "",
-        "## 报告语言",
-        "中文",
-      ].join("\n"),
+      syntheticPlan,
     )
     await this.writePhaseArtifact(
       workflowId,
       "develop",
-      [
-        "# 开发报告",
-        "",
-        "## Status",
-        "进行中",
-        "",
-        "## 修改文件",
-        "packages/runtime/src/bootstrap/create-harness.ts",
-        "",
-        "## 配套修改",
-        "新增 session client adapter",
-        "",
-        "## 自检结果",
-        "本地测试通过",
-        "",
-        "## 备注",
-        "等待最终完成",
-        "",
-        "## 报告语言",
-        "中文",
-      ].join("\n"),
+      syntheticDevelop,
     )
     await this.writePhaseArtifact(
       workflowId,

@@ -14,6 +14,7 @@ const COMMAND_DESCRIPTIONS: Record<WorkflowChannelCommand, string> = {
   "workflow-answer": "Answer workflow clarification questions.",
   "workflow-approve": "Approve the current workflow plan or decision.",
   "workflow-resume": "Resume a blocked workflow.",
+  "workflow-resync": "Re-sync a review/test workflow with out-of-band code edits and rerun the current phase.",
   "workflow-back": "Leave the workflow channel without stopping the workflow.",
 }
 

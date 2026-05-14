@@ -9,6 +9,7 @@ export interface HumanActionService {
   answer(workflowId: string, answers: Record<string, string>): Promise<void>
   approve(workflowId: string): Promise<void>
   resume(workflowId: string, decision?: BlockedDecision): Promise<void>
+  resync(workflowId: string): Promise<void>
 }
 
 export class DefaultHumanActionService implements HumanActionService {
@@ -124,5 +125,62 @@ export class DefaultHumanActionService implements HumanActionService {
       payload: { actionType: "blocked" },
     })
     await this.tickScheduler.requestTick(workflowId, "manual resume")
+  }
+
+  async resync(workflowId: string): Promise<void> {
+    const workflow = await this.stateStore.getWorkflow(workflowId)
+    const runtime = await this.stateStore.getRuntime(workflowId)
+    const resyncPhase = workflow?.phase === "blocked"
+      ? runtime?.blockedFromPhase
+      : workflow?.phase
+
+    if (resyncPhase !== "review" && resyncPhase !== "test") {
+      throw new Error("workflow_resync currently supports workflows paused in review or test only")
+    }
+
+    await this.artifactEvaluator.resetPhaseForResync(workflowId, resyncPhase)
+
+    const current = await this.humanActionStore.getCurrent(workflowId)
+    if (current) {
+      await this.humanActionStore.markResponded(current.id)
+      await this.humanActionStore.markConsumed(current.id)
+    }
+
+    await this.stateStore.updateWorkflow(workflowId, {
+      phase: resyncPhase,
+      status: "pending",
+      blockReason: null,
+    })
+
+    await this.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: null,
+      waitingHumanActionId: null,
+      recoveryState: "idle",
+      consecutiveFailures: 0,
+      lastArtifactSignalSignature: null,
+      developArtifactRepairDispatchPending: false,
+      reviewArtifactRepairDispatchPending: false,
+      testArtifactRepairDispatchPending: false,
+      pendingBlockedDecision: null,
+      outOfBandEditsDetected: true,
+      resyncCount: (runtime?.resyncCount ?? 0) + 1,
+      lastResyncedAt: new Date().toISOString(),
+      resyncedFromPhase: resyncPhase,
+      phaseDispatchAttempts: {
+        ...(runtime?.phaseDispatchAttempts ?? {}),
+        [resyncPhase]: 0,
+      },
+    })
+
+    await this.eventStore.append({
+      workflowId,
+      type: "workflow.resynced",
+      at: new Date().toISOString(),
+      payload: {
+        phase: resyncPhase,
+        strategy: "rerun_current_phase",
+      },
+    })
+    await this.tickScheduler.requestTick(workflowId, `workflow resync: rerun ${resyncPhase}`)
   }
 }

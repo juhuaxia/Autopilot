@@ -82,6 +82,65 @@ Autopilot 会在关键节点与你交互：
 
 如果 develop / review / test 阶段看起来已经结束，但当前阶段的 artifact 仍然保持模板态，Autopilot 会在升级为人工阻塞前，额外补发一次 **仅修复 artifact** 的派发。这次派发只允许更新 artifact，不允许继续修改业务代码。
 
+## 聊天式 Autopilot 指令
+
+Autopilot 支持少量私有 inline directives，可以直接写在正常聊天输入里。这些指令由 Autopilot 自己解析，**不是** OpenCode 宿主的 slash command。
+
+支持的指令：
+
+```text
+/ap-doc: docs/requirement.md
+/ap-start-at: develop
+```
+
+示例：
+
+```text
+1. 修改商品列表文案
+2. 调整主按钮颜色
+/ap-doc: docs/requirement.md
+/ap-start-at: develop
+```
+
+```text
+/ap-doc: local_docs/figma_md/page.md
+```
+
+规则：
+
+- `/ap-doc:` 会把文档作为显式 workflow 参考文档加入 workflow-open 输入。
+- `/ap-start-at: develop` 会显式跳过需求精炼和制定计划，直接从 `develop` 开始新 workflow。
+- 这两个指令需要单独占一行。
+- 普通正文里的 `startAt: develop` 只会被当成普通文本，**不会**被解释成控制指令。
+- direct-develop workflow 仍然保留 review/test 的质量护栏，并会在状态中记录 refinement/plan 被跳过。
+
+## 工作流恢复
+
+如果 workflow 停在 `review` 或 `test`，而你又在 workflow 外手动改了代码，请使用 `workflow_resync` 重新对齐当前 worktree 与 workflow 状态。
+
+行为说明：
+
+- `workflow_resync` 是一个独立的恢复命令/工具。
+- 当前只支持停在 `review` 或 `test` 的 workflow。
+- 它会把当前阶段 artifact 重置为新的重跑基线，然后重新派发同一阶段。
+- 默认行为是**重跑当前阶段**，不是沿用旧结论直接继续。
+
+一个典型的恢复流程：
+
+```text
+1. workflow 停在 review 或 test。
+2. 你在 workflow 外手动修了代码。
+3. 如有需要先 attach 或看 status。
+4. 对同一个 workflowId 执行 workflow_resync。
+5. Autopilot 重建当前阶段基线，并重新跑这一阶段。
+```
+
+常见使用顺序：
+
+```text
+workflow_status -> workflow_resync -> workflow_attach
+```
+
 ## 配置说明
 
 Autopilot 使用两个配置文件：

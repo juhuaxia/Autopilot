@@ -254,4 +254,61 @@ describe("workflow open request", () => {
       await rm(workspaceRoot, { recursive: true, force: true })
     }
   })
+
+  it("parses /ap-doc and /ap-start-at directives", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-chat-directives-"))
+    try {
+      await writeFile(join(workspaceRoot, "xxxxx.md"), "# Requirement\n\nSmall change.")
+      const result = await buildWorkflowOpenRequest("/ap-doc: xxxxx.md\n/ap-start-at: develop", workspaceRoot)
+
+      expect(result.startAt).toBe("develop")
+      expect(result.docPaths).toEqual(["xxxxx.md"])
+      expect(result.prompt).toBe("请基于需求文档直接进入 develop。")
+      expect(result.userRequest).toContain("[DOC_PATH] xxxxx.md")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("treats /ap-doc-only input as explicit workflow intent without clarification", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-doc-only-"))
+    try {
+      await writeFile(join(workspaceRoot, "xxxxx.md"), "# Requirement\n\nSmall change.")
+      const result = await buildWorkflowOpenRequest("/ap-doc: xxxxx.md", workspaceRoot)
+
+      expect(result.needsClarification).toBe(false)
+      expect(result.docPaths).toEqual(["xxxxx.md"])
+      expect(result.prompt).toBe("请基于需求文档启动 workflow。")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses /ap-start-at directive after numbered task list", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-chat-numbered-"))
+    try {
+      const result = await buildWorkflowOpenRequest("1.更改xxx文案\n2.更改按钮颜色\n/ap-start-at: develop", workspaceRoot)
+
+      expect(result.startAt).toBe("develop")
+      expect(result.prompt).toContain("1.更改xxx文案")
+      expect(result.prompt).toContain("2.更改按钮颜色")
+      expect(result.prompt).not.toContain("/ap-start-at: develop")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("does not treat inline startAt-like prose as a directive", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-chat-trailing-"))
+    try {
+      const result = await buildWorkflowOpenRequest("1.更改xxx文案，2更改按钮颜色，英文示例里保留 startAt: develop 这个字段", workspaceRoot)
+
+      expect(result.startAt).toBeUndefined()
+      expect(result.prompt).toContain("1.更改xxx文案")
+      expect(result.prompt).toContain("2更改按钮颜色")
+      expect(result.prompt).toContain("startAt: develop")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
 })
