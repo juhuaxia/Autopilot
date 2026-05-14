@@ -106,6 +106,14 @@ export function formatWorkflowUpdateResult(result: AutopilotUpdateResult): strin
     }
   }
 
+  if (result.ignoredPluginEntries.length > 0) {
+    lines.push("")
+    lines.push("Ignored plugin entries:")
+    for (const entry of result.ignoredPluginEntries) {
+      lines.push(`- ${entry}`)
+    }
+  }
+
   if (result.warnings.length > 0) {
     lines.push("")
     lines.push("Warnings:")

@@ -180,6 +180,49 @@ describe("autopilot updater", () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it("reports ignored plugin entries when npm and stale file entries coexist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "autopilot-update-mixed-entries-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    const packageRoot = join(repo, "node_modules", "@fkqfkq123", "opencode-autopilot")
+    const staleRoot = join(root, "stale", "dist")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await mkdir(staleRoot, { recursive: true })
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ version: "0.2.5" }, null, 2))
+    await writeFile(join(staleRoot, "plugin.js"), "export default {}\n")
+    await writeFile(join(staleRoot, "package.json"), JSON.stringify({ name: "@fkqfkq123/opencode-autopilot", version: "0.2.3" }, null, 2))
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({
+        plugin: [
+          "@fkqfkq123/opencode-autopilot",
+          `file://${join(staleRoot, "plugin.js")}`,
+        ],
+      }, null, 2),
+    )
+
+    const result = await runAutopilotUpdate({
+      cwd: repo,
+      homeDir: home,
+      options: {
+        fetchLatestReleaseVersion: async () => "0.2.4",
+        fetchLatestPackageVersion: async () => "0.2.5",
+      },
+    })
+
+    expect(result.mode).toBe("package")
+    expect(result.pluginEntry).toBe("@fkqfkq123/opencode-autopilot")
+    expect(result.detectedPluginEntries).toEqual([
+      "@fkqfkq123/opencode-autopilot",
+      `file://${join(staleRoot, "plugin.js")}`,
+    ])
+    expect(result.ignoredPluginEntries).toEqual([`file://${join(staleRoot, "plugin.js")}`])
+    expect(result.latestVersion).toBe("0.2.5")
+
+    await rm(root, { recursive: true, force: true })
+  })
+
   it("asks for install when plugin is not registered", async () => {
     const root = await mkdtemp(join(tmpdir(), "autopilot-update-missing-"))
     const home = join(root, "home")

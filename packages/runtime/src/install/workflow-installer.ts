@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { ensureAutopilotConfigFile, AUTOPILOT_CONFIG_FILENAME } from "../config/workflow-config"
 import { fileExists, writeJsonFile } from "../shared/json-file"
 
@@ -42,6 +43,42 @@ export async function resolveOpencodeConfigFile(opencodeConfigDir: string): Prom
   }
 
   return { filePath: jsonFile, warnings }
+}
+
+async function isAutopilotPluginEntry(entry: string): Promise<boolean> {
+  if (entry === "@fkqfkq123/opencode-autopilot") {
+    return true
+  }
+
+  if (!entry.startsWith("file://")) {
+    return false
+  }
+
+  try {
+    const pluginFile = fileURLToPath(entry)
+    let releaseMetadata: unknown = null
+    let packageMetadata: unknown = null
+    try {
+      releaseMetadata = JSON.parse(await readFile(join(dirname(pluginFile), "release.json"), "utf8")) as unknown
+    } catch {
+      releaseMetadata = null
+    }
+    try {
+      packageMetadata = JSON.parse(await readFile(join(dirname(pluginFile), "package.json"), "utf8")) as unknown
+    } catch {
+      packageMetadata = null
+    }
+    const releaseName = releaseMetadata && typeof releaseMetadata === "object" && !Array.isArray(releaseMetadata)
+      ? (releaseMetadata as { name?: unknown }).name
+      : null
+    const packageName = packageMetadata && typeof packageMetadata === "object" && !Array.isArray(packageMetadata)
+      ? (packageMetadata as { name?: unknown }).name
+      : null
+
+    return releaseName === "autopilot" || packageName === "@fkqfkq123/opencode-autopilot"
+  } catch {
+    return false
+  }
 }
 
 export async function runWorkflowInstall(args: {
@@ -106,15 +143,29 @@ export async function runWorkflowInstall(args: {
 
   const config = parsed as { plugin?: unknown }
   const pluginArray = Array.isArray(config.plugin) ? [...config.plugin] : []
-  if (!pluginArray.includes(pluginEntry)) {
-    pluginArray.push(pluginEntry)
+
+  const normalizedPlugins: string[] = []
+  for (const entry of pluginArray.filter((item): item is string => typeof item === "string")) {
+    if (await isAutopilotPluginEntry(entry)) {
+      continue
+    }
+    if (!normalizedPlugins.includes(entry)) {
+      normalizedPlugins.push(entry)
+    }
+  }
+
+  const preferredAutopilotEntry = pluginArray.includes("@fkqfkq123/opencode-autopilot")
+    ? "@fkqfkq123/opencode-autopilot"
+    : pluginEntry
+  if (!normalizedPlugins.includes(preferredAutopilotEntry)) {
+    normalizedPlugins.push(preferredAutopilotEntry)
   }
 
   await writeFile(
     opencodeConfigFile,
     `${JSON.stringify({
       ...(parsed as Record<string, unknown>),
-      plugin: pluginArray,
+      plugin: normalizedPlugins,
     }, null, 2)}\n`,
     "utf8",
   )

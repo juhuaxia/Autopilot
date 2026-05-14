@@ -43,6 +43,7 @@ describe("workflow diagnostics formatters", () => {
       resolvedConfigSourceFile: "/home/user/.config/opencode/opencode.json",
       pluginEntry: "file:///home/user/.config/opencode/plugins/autopilot/plugin.js",
       detectedPluginEntries: ["file:///home/user/.config/opencode/plugins/autopilot/plugin.js"],
+      ignoredPluginEntries: ["@fkqfkq123/opencode-autopilot"],
       previousVersion: "0.1.9",
       currentVersion: "0.1.9",
       latestVersion: "0.1.10",
@@ -57,6 +58,7 @@ describe("workflow diagnostics formatters", () => {
     expect(output).toContain("Resolved config source: /home/user/.config/opencode/opencode.json")
     expect(output).toContain("Previous version: 0.1.9")
     expect(output).toContain("Detected plugin entries:")
+    expect(output).toContain("Ignored plugin entries:")
     expect(output).toContain("Latest version: 0.1.10")
     expect(output).toContain("Restart required: yes")
     expect(output).toContain("Recommended next steps:")

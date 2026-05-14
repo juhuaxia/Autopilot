@@ -44,6 +44,40 @@ describe("workflow installer", () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it("removes stale autopilot file entries when npm package entry already exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workflow-install-dedupe-autopilot-"))
+    const home = join(root, "home")
+    const repo = join(root, "repo")
+    await mkdir(join(home, ".config", "opencode"), { recursive: true })
+    await mkdir(repo, { recursive: true })
+
+    await writeFile(
+      join(home, ".config", "opencode", "opencode.json"),
+      JSON.stringify({
+        plugin: [
+          "@fkqfkq123/opencode-autopilot",
+          `file://${join(root, "tmp-a", "dist", "plugin.js")}`,
+          `file://${join(root, "tmp-b", "dist", "plugin.js")}`,
+          "other-plugin",
+        ],
+      }, null, 2),
+    )
+    await mkdir(join(root, "tmp-a", "dist"), { recursive: true })
+    await mkdir(join(root, "tmp-b", "dist"), { recursive: true })
+    await writeFile(join(root, "tmp-a", "dist", "plugin.js"), "export default {}\n")
+    await writeFile(join(root, "tmp-b", "dist", "plugin.js"), "export default {}\n")
+    await writeFile(join(root, "tmp-a", "dist", "package.json"), JSON.stringify({ name: "@fkqfkq123/opencode-autopilot" }, null, 2))
+    await writeFile(join(root, "tmp-b", "dist", "package.json"), JSON.stringify({ name: "@fkqfkq123/opencode-autopilot" }, null, 2))
+
+    const result = await runWorkflowInstall({ cwd: repo, homeDir: home })
+    const opencodeJson = JSON.parse(await readFile(join(home, ".config", "opencode", "opencode.json"), "utf8")) as { plugin?: string[] }
+
+    expect(result.ok).toBe(true)
+    expect(opencodeJson.plugin).toEqual(["other-plugin", "@fkqfkq123/opencode-autopilot"])
+
+    await rm(root, { recursive: true, force: true })
+  })
+
   it("fails safely when existing opencode config is not valid json", async () => {
     const root = await mkdtemp(join(tmpdir(), "workflow-install-invalid-json-"))
     const home = join(root, "home")

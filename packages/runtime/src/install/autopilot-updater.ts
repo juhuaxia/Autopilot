@@ -17,6 +17,7 @@ export type AutopilotUpdateResult = {
   resolvedConfigSourceFile: string
   pluginEntry: string | null
   detectedPluginEntries: string[]
+  ignoredPluginEntries: string[]
   previousVersion: string | null
   currentVersion: string | null
   latestVersion: string | null
@@ -280,6 +281,7 @@ export async function runAutopilotUpdate(args: {
       resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: null,
       detectedPluginEntries: [],
+      ignoredPluginEntries: [],
       previousVersion: null,
       currentVersion: null,
       latestVersion,
@@ -291,8 +293,10 @@ export async function runAutopilotUpdate(args: {
   }
 
   const detectedPluginEntries = extractPluginEntries(parsed)
-
   const target = await resolvePluginTarget({ repoRoot, config: parsed })
+  const ignoredPluginEntries = target.pluginEntry
+    ? detectedPluginEntries.filter((entry) => entry !== target.pluginEntry)
+    : detectedPluginEntries
 
   try {
     latestVersion = target.mode === "package"
@@ -316,6 +320,7 @@ export async function runAutopilotUpdate(args: {
       resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: null,
       detectedPluginEntries,
+      ignoredPluginEntries,
       previousVersion: null,
       currentVersion: null,
       latestVersion,
@@ -342,6 +347,7 @@ export async function runAutopilotUpdate(args: {
       resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: target.pluginEntry,
       detectedPluginEntries,
+      ignoredPluginEntries,
       previousVersion: currentVersion,
       currentVersion,
       latestVersion,
@@ -365,6 +371,7 @@ export async function runAutopilotUpdate(args: {
         resolvedConfigSourceFile: configResolution.filePath,
         pluginEntry: target.pluginEntry,
         detectedPluginEntries,
+        ignoredPluginEntries,
         previousVersion,
         currentVersion: previousVersion,
         latestVersion,
@@ -384,6 +391,7 @@ export async function runAutopilotUpdate(args: {
       resolvedConfigSourceFile: configResolution.filePath,
       pluginEntry: target.pluginEntry,
       detectedPluginEntries,
+      ignoredPluginEntries,
       previousVersion,
       currentVersion,
       latestVersion,
@@ -409,6 +417,7 @@ export async function runAutopilotUpdate(args: {
     resolvedConfigSourceFile: configResolution.filePath,
     pluginEntry: target.pluginEntry,
     detectedPluginEntries,
+    ignoredPluginEntries,
     previousVersion,
     currentVersion,
     latestVersion,
