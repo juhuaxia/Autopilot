@@ -1,6 +1,6 @@
 import { initializeWorkflow } from "../bootstrap/initialize-workflow"
 import { renderHumanActionBlock } from "../presentation/human-action-renderer"
-import { buildWorkflowOpenRequest } from "./workflow-open-request"
+import { buildWorkflowOpenRequestWithOptions } from "./workflow-open-request"
 import {
   classifyWorkflowIntent,
   formatRoutingOutput,
@@ -343,7 +343,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
     assertWorkflowId(workflowId)
 
     if (command === "workflow-open") {
-      const openRequest = await buildWorkflowOpenRequest(payload, process.cwd())
+      const openRequest = await buildWorkflowOpenRequestWithOptions(payload, process.cwd(), {
+        imageSummaryService: harness.imageSummaryService,
+      })
 
       // Skip clarification for routing-capable inputs; only clarify
       // pure document references that lack action intent

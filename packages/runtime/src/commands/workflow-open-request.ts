@@ -1,11 +1,18 @@
 import { access, readdir, readFile } from "node:fs/promises"
 import { isAbsolute, resolve } from "node:path"
+import type { ImageSummaryService } from "../images/image-summary-service"
 
 const MAX_DOC_CHARS = 12_000
 const MAX_CANDIDATE_DOCS = 20
 const MAX_SCAN_DEPTH = 3
+const MAX_READ_TARGET_IMAGES = 5
+const MAX_IMAGE_SUMMARY_CONCURRENCY = 2
 const DOC_EXTENSIONS = [".md", ".markdown", ".txt", ".rst", ".adoc", ".pdf", ".docx"]
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 const COMMON_DOC_DIRS = ["docs", "doc", "spec", "specs", "design", "prd", "product", "requirements"]
+const READ_TARGET_PATTERN = /@read\(([^)]+)\)/g
+
+type ReadTargetKind = "text" | "image" | "unknown"
 
 type WorkflowOpenRequestJson = {
   prompt?: string
@@ -32,6 +39,9 @@ export interface WorkflowOpenRequest {
   userRequest: string
   prompt: string
   docPaths: string[]
+  readTargets: Array<{ raw: string; path: string; kind: ReadTargetKind }>
+  textReadTargets: Array<{ path: string; content: string }>
+  imageReadTargets: Array<{ path: string }>
   projectContext?: string
   needsClarification: boolean
   clarificationQuestion?: string
@@ -50,6 +60,38 @@ const trimToEmpty = (value: string | undefined): string => value?.trim() ?? ""
 const hasDocExtension = (value: string): boolean => {
   const normalized = value.trim().toLowerCase()
   return DOC_EXTENSIONS.some((extension) => normalized.endsWith(extension))
+}
+
+const hasImageExtension = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase()
+  return IMAGE_EXTENSIONS.some((extension) => normalized.endsWith(extension))
+}
+
+function classifyReadTarget(pathValue: string): ReadTargetKind {
+  if (hasDocExtension(pathValue)) {
+    return "text"
+  }
+  if (hasImageExtension(pathValue)) {
+    return "image"
+  }
+  return "unknown"
+}
+
+function extractReadTargets(value: string): Array<{ raw: string; path: string; kind: ReadTargetKind }> {
+  const targets: Array<{ raw: string; path: string; kind: ReadTargetKind }> = []
+  for (const match of value.matchAll(READ_TARGET_PATTERN)) {
+    const raw = match[0]?.trim()
+    const path = match[1]?.trim()
+    if (!raw || !path) {
+      continue
+    }
+    targets.push({
+      raw,
+      path,
+      kind: classifyReadTarget(path),
+    })
+  }
+  return targets
 }
 
 const normalizeDocumentLikeInput = (value: string): string =>
@@ -278,6 +320,14 @@ function inferOpenIntent(rawPayload: string, prompt: string, docPaths: string[])
 }
 
 export async function buildWorkflowOpenRequest(payload: string | undefined, workspaceRoot: string): Promise<WorkflowOpenRequest> {
+  return buildWorkflowOpenRequestWithOptions(payload, workspaceRoot, {})
+}
+
+export async function buildWorkflowOpenRequestWithOptions(
+  payload: string | undefined,
+  workspaceRoot: string,
+  options: { imageSummaryService?: ImageSummaryService },
+): Promise<WorkflowOpenRequest> {
   const rawPayload = trimToEmpty(payload)
   const structured = rawPayload ? parseStructuredRequest(rawPayload) : null
 
@@ -293,6 +343,9 @@ export async function buildWorkflowOpenRequest(payload: string | undefined, work
     || undefined
   const intent = inferOpenIntent(rawPayload, prompt, docPaths)
   const continuationIntent = detectContinuationIntent(rawPayload)
+  const readTargets = extractReadTargets(prompt)
+  const textReadTargets: Array<{ path: string; content: string }> = []
+  const imageReadTargets: Array<{ path: string }> = []
 
   const lines: string[] = []
   lines.push("[USER_PROMPT]")
@@ -331,14 +384,125 @@ export async function buildWorkflowOpenRequest(payload: string | undefined, work
     lines.push("[DOC_CANDIDATES_POLICY] Candidate list is recall-only. AI must decide relevance and read selected docs before filling artifact.")
   }
 
+  if (readTargets.length > 0) {
+    lines.push("")
+    lines.push("[READ_TARGETS]")
+    lines.push(...readTargets.map((target) => `- type=${target.kind} path=${target.path}`))
+    lines.push("[READ_TARGETS_POLICY] These targets were explicitly marked with @read(...). spec_refinement and plan must treat them as explicit read targets. Later phases should rely on the structured outputs produced earlier instead of re-reading them by default.")
+
+    for (const target of readTargets) {
+      if (target.kind === "text") {
+        const absolutePath = toAbsolutePath(target.path, workspaceRoot)
+        try {
+          const content = await readFile(absolutePath, "utf8")
+          textReadTargets.push({
+            path: target.path,
+            content: normalizeDocSnippet(content),
+          })
+          lines.push("")
+          lines.push(`[READ_TARGET_PATH] ${target.path}`)
+          lines.push("[READ_TARGET_CONTENT]")
+          lines.push(normalizeDocSnippet(content))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          lines.push("")
+          lines.push(`[READ_TARGET_PATH] ${target.path}`)
+          lines.push(`[READ_TARGET_ERROR] ${message}`)
+        }
+        continue
+      }
+
+    }
+
+    const imageTargetsToRead = readTargets.filter((target) => target.kind === "image").slice(0, MAX_READ_TARGET_IMAGES)
+    if (readTargets.filter((target) => target.kind === "image").length > MAX_READ_TARGET_IMAGES) {
+      lines.push("")
+      lines.push(`[READ_TARGET_WARNING] only the first ${MAX_READ_TARGET_IMAGES} image read targets were analyzed`)
+    }
+
+    const imageResults = await runWithConcurrency(imageTargetsToRead, MAX_IMAGE_SUMMARY_CONCURRENCY, async (target) => {
+      imageReadTargets.push({ path: target.path })
+      const absolutePath = toAbsolutePath(target.path, workspaceRoot)
+      if (!options.imageSummaryService) {
+        return {
+          path: target.path,
+          ok: false,
+          error: "image understanding unavailable in current environment",
+        }
+      }
+      try {
+        const result = await options.imageSummaryService.summarize(absolutePath)
+        return {
+          path: target.path,
+          ok: result.ok,
+          summary: result.summary,
+          error: result.error,
+        }
+      } catch (error) {
+        return {
+          path: target.path,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    })
+
+    for (const result of imageResults) {
+      lines.push("")
+      lines.push(`[READ_TARGET_IMAGE_PATH] ${result.path}`)
+      if (result.ok && result.summary?.trim()) {
+        lines.push("[READ_TARGET_IMAGE_SUMMARY]")
+        lines.push(condenseImageSummary(result.summary.trim()))
+      } else {
+        lines.push(`[READ_TARGET_IMAGE_ERROR] ${result.error ?? "image understanding unavailable in current environment"}`)
+      }
+    }
+  }
+
   return {
     userRequest: lines.join("\n"),
     prompt,
     docPaths,
+    readTargets,
+    textReadTargets,
+    imageReadTargets,
     needsClarification: intent.needsClarification,
     ...(intent.clarificationQuestion ? { clarificationQuestion: intent.clarificationQuestion } : {}),
     ...(intent.clarificationOptions ? { clarificationOptions: intent.clarificationOptions } : {}),
     ...(projectContext ? { projectContext } : {}),
     ...(continuationIntent ? { continuationIntent } : {}),
   }
+}
+
+async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let index = 0
+
+  const runWorker = async (): Promise<void> => {
+    while (index < items.length) {
+      const currentIndex = index
+      index += 1
+      const item = items[currentIndex]
+      if (item === undefined) {
+        continue
+      }
+      results[currentIndex] = await worker(item)
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runWorker())
+  await Promise.all(workers)
+  return results
+}
+
+function condenseImageSummary(summary: string): string {
+  const lines = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  const condensed = lines.join("\n")
+  if (condensed.length <= 3000) {
+    return condensed
+  }
+  return `${condensed.slice(0, 3000)}\n[IMAGE_SUMMARY_NOTE] condensed to fit prompt budget`
 }
