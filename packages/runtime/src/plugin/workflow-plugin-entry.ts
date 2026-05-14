@@ -415,8 +415,9 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         description: "Resume a blocked workflow.",
         args: {
           workflowId: workflowIdSchema,
+          payload: z.string().optional().describe("Optional JSON string payload for blocked decisions, for example {\"decision\":\"fix\"}."),
         },
-        execute: async (args: { workflowId: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resume", args.workflowId, undefined, context?.sessionID),
+        execute: async (args: { workflowId: string; payload?: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resume", args.workflowId, args.payload, context?.sessionID),
       },
       workflow_back: {
         description: "Leave the workflow channel without stopping the workflow.",

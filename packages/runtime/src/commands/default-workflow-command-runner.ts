@@ -510,12 +510,23 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       await harness.humanActionService.approve(workflowId)
       await harness.attachService.attach(workflowId)
     } else if (command === "workflow-resume") {
+      let resumeDecision: "fix" | "accept" | undefined
+      if (payload) {
+        try {
+          const parsed = JSON.parse(payload) as { decision?: unknown }
+          if (parsed.decision === "fix" || parsed.decision === "accept") {
+            resumeDecision = parsed.decision
+          }
+        } catch {
+          resumeDecision = undefined
+        }
+      }
       if (foregroundSessionId) {
         await harness.stateStore.updateRuntime(workflowId, {
           preferredForegroundSessionId: foregroundSessionId,
         })
       }
-      await harness.humanActionService.resume(workflowId)
+      await harness.humanActionService.resume(workflowId, resumeDecision)
       await harness.attachService.attach(workflowId)
     } else if (command === "workflow-back") {
       await harness.sessionActivityMonitor.stop(workflowId)

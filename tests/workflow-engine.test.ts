@@ -1594,4 +1594,136 @@ describe("workflow harness MVP", () => {
 
     await rm(baseDir, { recursive: true, force: true })
   })
+
+  it("routes blocked review decision fix back to develop", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-decision-fix"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review blocked 决策 fix 会回 develop。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "pending",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      pendingBlockedDecision: {
+        actionId: "action-review-fix",
+        decision: "fix",
+        decidedAt: new Date().toISOString(),
+      },
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "consume review fix decision")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.phase).not.toBe("review")
+    expect(runtime?.pendingBlockedDecision).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("routes blocked review decision accept forward to test", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-decision-accept"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review blocked 决策 accept 会进 test。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "pending",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      pendingBlockedDecision: {
+        actionId: "action-review-accept",
+        decision: "accept",
+        decidedAt: new Date().toISOString(),
+      },
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "consume review accept decision")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.phase === "test" || workflow?.phase === "done").toBe(true)
+    expect(runtime?.pendingBlockedDecision).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("routes blocked test decision fix back to develop", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-decision-fix"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 test blocked 决策 fix 会回 develop。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "test",
+      status: "pending",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      pendingBlockedDecision: {
+        actionId: "action-test-fix",
+        decision: "fix",
+        decidedAt: new Date().toISOString(),
+      },
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "consume test fix decision")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.phase).not.toBe("test")
+    expect(runtime?.pendingBlockedDecision).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("routes blocked test decision accept to done", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-decision-accept"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 test blocked 决策 accept 会直接完成。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "test",
+      status: "pending",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      pendingBlockedDecision: {
+        actionId: "action-test-accept",
+        decision: "accept",
+        decidedAt: new Date().toISOString(),
+      },
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "consume test accept decision")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.phase).toBe("done")
+    expect(runtime?.pendingBlockedDecision).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
 })

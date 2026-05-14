@@ -2,6 +2,8 @@ export type RecoveryState = "idle" | "recovering"
 
 export type PhaseDispatchAttempts = Partial<Record<"spec_refinement" | "plan" | "develop" | "review" | "test", number>>
 
+export type BlockedDecision = "fix" | "accept"
+
 export interface WorkflowRuntimeState {
   workflowId: string
   preferredForegroundSessionId?: string | null
@@ -20,4 +22,9 @@ export interface WorkflowRuntimeState {
   developArtifactRepairDispatchPending?: boolean
   reviewArtifactRepairDispatchPending?: boolean
   testArtifactRepairDispatchPending?: boolean
+  pendingBlockedDecision?: {
+    actionId: string
+    decision: BlockedDecision
+    decidedAt: string
+  } | null
 }

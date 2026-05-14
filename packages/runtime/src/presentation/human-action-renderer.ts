@@ -62,6 +62,9 @@ function exactAction(record: HumanActionRecord): string {
     return `Run: bun run src/cli.ts approve ${record.workflowId}`
   }
   if (record.action.type === "blocked") {
+    if (record.action.allowedDecisions?.includes("fix") || record.action.allowedDecisions?.includes("accept")) {
+      return `Run: bun run src/cli.ts resume ${record.workflowId} '{"decision":"fix"}'`
+    }
     return `Run: bun run src/cli.ts resume ${record.workflowId}`
   }
   return "No action required"
@@ -81,6 +84,13 @@ function recommendedTool(record: HumanActionRecord): string {
 }
 
 function recommendedPayload(record: HumanActionRecord): string | null {
+  if (record.action.type === "blocked") {
+    if (record.action.allowedDecisions?.includes("fix") || record.action.allowedDecisions?.includes("accept")) {
+      return JSON.stringify({ decision: "fix" })
+    }
+    return null
+  }
+
   if (record.action.type !== "need_answers") {
     return null
   }

@@ -1,13 +1,14 @@
 import type { FileSystemArtifactEvaluator } from "../artifacts/file-system-artifact-evaluator"
 import type { WorkflowEventStore } from "../events/workflow-event-store"
 import type { TickScheduler } from "../scheduling/tick-scheduler"
+import type { BlockedDecision } from "../../../core/src/state/workflow-runtime-state"
 import type { HumanActionStore } from "./human-action-store"
 import type { WorkflowStateStore } from "./workflow-state-store"
 
 export interface HumanActionService {
   answer(workflowId: string, answers: Record<string, string>): Promise<void>
   approve(workflowId: string): Promise<void>
-  resume(workflowId: string): Promise<void>
+  resume(workflowId: string, decision?: BlockedDecision): Promise<void>
 }
 
 export class DefaultHumanActionService implements HumanActionService {
@@ -41,6 +42,7 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      pendingBlockedDecision: null,
     })
     await this.eventStore.append({
       workflowId,
@@ -71,6 +73,7 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      pendingBlockedDecision: null,
     })
     await this.eventStore.append({
       workflowId,
@@ -81,7 +84,7 @@ export class DefaultHumanActionService implements HumanActionService {
     await this.tickScheduler.requestTick(workflowId, "human approved")
   }
 
-  async resume(workflowId: string): Promise<void> {
+  async resume(workflowId: string, decision?: BlockedDecision): Promise<void> {
     const workflow = await this.stateStore.getWorkflow(workflowId)
     const runtime = await this.stateStore.getRuntime(workflowId)
     const current = await this.humanActionStore.getCurrent(workflowId)
@@ -106,6 +109,13 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      pendingBlockedDecision: current && current.action.type === "blocked" && decision
+        ? {
+            actionId: current.id,
+            decision,
+            decidedAt: new Date().toISOString(),
+          }
+        : null,
     })
     await this.eventStore.append({
       workflowId,

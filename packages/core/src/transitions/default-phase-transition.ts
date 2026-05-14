@@ -1,5 +1,6 @@
 import type { HumanAction } from "../human-actions/human-action"
 import type { Phase } from "../state/phase"
+import type { BlockedDecision } from "../state/workflow-runtime-state"
 import type { PhaseTransition, PhaseTransitionInput } from "./phase-transition"
 import type { TransitionAction } from "./transition-action"
 
@@ -96,13 +97,32 @@ function buildUnknownConclusionBlockedDiagnostic(input: PhaseTransitionInput, ph
 function buildReportFailureBlockedDiagnostic(input: PhaseTransitionInput, phase: "review" | "test"): {
   reason: string
   summary?: string
+  allowedDecisions: BlockedDecision[]
 } {
   return {
     reason: phase === "review"
       ? "Review failed without blocker severity and needs human decision"
       : "Test failed and needs human decision",
+    allowedDecisions: ["fix", "accept"],
     ...(input.artifact.summary ? { summary: input.artifact.summary } : {}),
   }
+}
+
+function consumeBlockedDecision(input: PhaseTransitionInput, phase: "review" | "test"): TransitionAction | null {
+  const decision = input.runtime.pendingBlockedDecision?.decision
+  if (!decision) {
+    return null
+  }
+
+  if (phase === "review") {
+    return decision === "fix"
+      ? { type: "advance_phase", nextPhase: "develop", reason: "Manual decision: fix review issues" }
+      : { type: "advance_phase", nextPhase: "test", reason: "Manual decision: accept current review state and continue" }
+  }
+
+  return decision === "fix"
+    ? { type: "advance_phase", nextPhase: "develop", reason: "Manual decision: return to develop from failed test" }
+    : { type: "advance_phase", nextPhase: "done", reason: "Manual decision: accept current test state and finish workflow" }
 }
 
 function shouldEscalateUnknownConclusion(input: PhaseTransitionInput, phase: "review" | "test"): TransitionAction | null {
@@ -263,6 +283,11 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "review") {
+      const manualDecision = consumeBlockedDecision(input, "review")
+      if (manualDecision) {
+        return manualDecision
+      }
+
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "review")
         if (repeatedSignalEscalation) {
@@ -335,6 +360,11 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "test") {
+      const manualDecision = consumeBlockedDecision(input, "test")
+      if (manualDecision) {
+        return manualDecision
+      }
+
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "test")
         if (repeatedSignalEscalation) {

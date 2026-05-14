@@ -347,34 +347,39 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           && action.nextPhase === "develop"
           ? { iteration: workflow.iteration + 1 }
           : {}
+        const advanceRuntimePatch = {
+          blockedFromPhase: null,
+          waitingHumanActionId: null,
+          consecutiveFailures: 0,
+          phaseDispatchAttempts: {},
+          lastArtifactSignalSignature: null,
+          developArtifactRepairDispatchPending: false,
+          reviewArtifactRepairDispatchPending: false,
+          testArtifactRepairDispatchPending: false,
+          pendingBlockedDecision: null,
+          ...(workflow.phase === "spec_refinement"
+            ? {
+                refinementAttempts: 0,
+                refinementLastDispatchSummary: null,
+                refinementEscalationReason: null,
+              }
+            : {}),
+        }
 
         if (workflow.phase === "test" && action.nextPhase === "done") {
-          const finalArtifact = await this.deps.artifactEvaluator.evaluate(workflow)
-          if (!(finalArtifact.valid && finalArtifact.missing.length === 0 && finalArtifact.reportStatus === "pass")) {
-            return
+          if (action.reason !== "Manual decision: accept current test state and finish workflow") {
+            const finalArtifact = await this.deps.artifactEvaluator.evaluate(workflow)
+            if (!(finalArtifact.valid && finalArtifact.missing.length === 0 && finalArtifact.reportStatus === "pass")) {
+              return
+            }
           }
         }
 
         if (currentHumanAction && currentHumanAction.status !== "consumed") {
           await this.deps.humanActionStore.markConsumed(currentHumanAction.id)
-          await this.deps.stateStore.updateRuntime(workflowId, {
-            blockedFromPhase: null,
-            waitingHumanActionId: null,
-            consecutiveFailures: 0,
-              phaseDispatchAttempts: {},
-              lastArtifactSignalSignature: null,
-              developArtifactRepairDispatchPending: false,
-              reviewArtifactRepairDispatchPending: false,
-              testArtifactRepairDispatchPending: false,
-              ...(workflow.phase === "spec_refinement"
-                ? {
-                  refinementAttempts: 0,
-                  refinementLastDispatchSummary: null,
-                  refinementEscalationReason: null,
-                }
-              : {}),
-          })
         }
+
+        await this.deps.stateStore.updateRuntime(workflowId, advanceRuntimePatch)
 
         await this.deps.sessionCoordinator.archiveIrrelevantSessions(
           workflowId,

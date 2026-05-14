@@ -130,6 +130,7 @@ describe("human action renderer", () => {
         phase: "test",
         reason: "Test failed",
         required: true,
+        allowedDecisions: ["fix", "accept"],
         createdAt: new Date().toISOString(),
       },
     }
@@ -138,5 +139,7 @@ describe("human action renderer", () => {
       .toContain("Recommended tool: workflow_approve")
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
       .toContain("Recommended tool: workflow_resume")
+    expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
+      .toContain("Recommended payload: {\"decision\":\"fix\"}")
   })
 })

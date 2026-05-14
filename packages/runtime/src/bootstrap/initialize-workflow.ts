@@ -44,6 +44,7 @@ export async function initializeWorkflow(args: {
     developArtifactRepairDispatchPending: false,
     reviewArtifactRepairDispatchPending: false,
     testArtifactRepairDispatchPending: false,
+    pendingBlockedDecision: null,
   }
 
   await stateStore.saveWorkflow(workflow)

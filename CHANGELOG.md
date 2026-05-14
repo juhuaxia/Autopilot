@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-05-14
+
+### Added
+
+- Added structured blocked decision semantics for `workflow_resume`.
+- Added support for blocked decision payloads such as `{"decision":"fix"}` and `{"decision":"accept"}`.
+- Added `allowedDecisions` metadata to blocked human actions so renderer and tool layers can surface actionable next-step payloads.
+
+### Changed
+
+- Review/test blocked states can now distinguish "fix" vs "accept current state" instead of routing both cases through the same payload-less resume path.
+- `workflow_resume` payload handling is now propagated through CLI, plugin tool wiring, runtime state, and transition logic.
+- Human-action rendering now surfaces a recommended payload for blocked review/test decisions.
+
+### Fixed
+
+- Fixed the real workflow issue where review/test non-blocker FAIL decisions could loop back to the same manual decision point because `workflow_resume` carried no structured choice.
+- Fixed blocked-decision state cleanup so consumed manual decisions no longer linger in runtime state after phase advancement.
+
+### Verification
+
+- Typecheck passes.
+- Build passes.
+- Workflow blocked-decision regression tests pass.
+
 ## [0.2.3] - 2026-05-14
 
 ### Added
