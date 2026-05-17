@@ -10,6 +10,7 @@ import type { WorkflowEventStore } from "../events/workflow-event-store"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { ResolvedWorkflowConfig } from "../config/workflow-config"
 import type { ImageSummaryService } from "../images/image-summary-service"
+import type { ReviewSidecarManager } from "../review/review-sidecar-manager"
 
 export interface WorkflowEngine {
   tick(workflowId: string): Promise<void>
@@ -29,4 +30,5 @@ export interface WorkflowEngineDeps {
   resolvedConfig?: ResolvedWorkflowConfig
   skillRegistry?: Map<string, string>
   imageSummaryService: ImageSummaryService
+  reviewSidecarManager: ReviewSidecarManager
 }

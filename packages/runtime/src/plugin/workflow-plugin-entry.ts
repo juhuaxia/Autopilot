@@ -2,6 +2,8 @@ import type { WorkflowPluginCommandDefinition } from "../commands/create-opencod
 import { createOpencodeWorkflowCommands } from "../commands/create-opencode-workflow-commands"
 import { DefaultWorkflowCommandRunner } from "../commands/default-workflow-command-runner"
 import { DefaultWorkflowPluginCommandAdapter } from "../commands/opencode-plugin-command-adapter"
+import { AUTOPILOT_PRESET_DEFINITIONS } from "../commands/autopilot-presets"
+import { buildAutopilotCommandPayload } from "../commands/autopilot-command-presets"
 import { createHarness } from "../bootstrap/create-harness"
 import { runWorkflowDoctor } from "../diagnostics/workflow-doctor"
 import { runAutopilotUpdate } from "../install/autopilot-updater"
@@ -41,6 +43,7 @@ type NativeAgentConfig = {
 
 type NativeHostConfig = {
   agent?: Record<string, NativeAgentConfig>
+  command?: Record<string, { template: string; description: string; agent?: string }>
 }
 
 type HostTodoItem = {
@@ -113,6 +116,20 @@ Hard rules:
 
 const WORKFLOW_PRIMARY_AGENT_DESCRIPTION = "Primary workflow agent that drives refine->plan->develop->review->test via workflow tools"
 const WORKFLOW_PRIMARY_AGENT_MODEL = "openai/gpt-5.5"
+
+const AUTOPILOT_HOST_COMMANDS = Object.fromEntries(
+  Object.values(AUTOPILOT_PRESET_DEFINITIONS).map((preset) => [
+    preset.commandName,
+    {
+      description: preset.description,
+      template: buildAutopilotCommandPayload({
+        preset: preset.mode,
+        prompt: "$ARGUMENTS",
+      }),
+      agent: "workflow",
+    },
+  ]),
+) as Record<string, { description: string; template: string; agent: string }>
 
 function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadata {
   return {
@@ -299,12 +316,16 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         return
       }
       cfg.agent ??= {}
+      cfg.command ??= {}
       cfg.agent[primaryAgent.name] = {
         mode: primaryAgent.mode,
         description: primaryAgent.description,
         model: primaryAgent.model,
         prompt: WORKFLOW_PRIMARY_AGENT_PROMPT,
         tools: primaryAgent.tools,
+      }
+      for (const [commandName, commandConfig] of Object.entries(AUTOPILOT_HOST_COMMANDS)) {
+        cfg.command[commandName] = commandConfig
       }
     },
     healthcheck: async () => ({

@@ -346,6 +346,20 @@ export class DefaultPhaseTransition implements PhaseTransition {
         }
       }
 
+      if (
+        artifact.reportStatus === "unknown"
+        && workflow.status === "in_progress"
+        && input.runtime.reviewReadyToConsolidate
+        && !input.runtime.reviewConsolidationDispatched
+        && (session.status === "idle" || session.status === "stale")
+      ) {
+        return {
+          type: "dispatch",
+          phase: workflow.phase,
+          reason: "Review reviewer consolidation is ready; merge reviewer sidecar summaries into one explicit PASS or FAIL conclusion",
+        }
+      }
+
       if (artifact.reportStatus === "unknown" && workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const escalation = shouldEscalateUnknownConclusion(input, "review")
         if (escalation) {

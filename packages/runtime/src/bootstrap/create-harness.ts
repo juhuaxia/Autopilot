@@ -14,6 +14,7 @@ import { ensureAutopilotConfigFile, resolveWorkflowConfig, AUTOPILOT_CONFIG_FILE
 import { NoopImageSummaryService, VisionModelImageSummaryService, type ImageSummaryService } from "../images/image-summary-service"
 import { DefaultWorkflowEngine } from "../engine/default-workflow-engine"
 import { FileSystemWorkflowEventStore } from "../events/file-system-workflow-event-store"
+import { ReviewSidecarManager } from "../review/review-sidecar-manager"
 import { BasicRecoveryClassifier } from "../recovery/basic-recovery-classifier"
 import { ImmediateTickScheduler } from "../scheduling/immediate-tick-scheduler"
 import { DefaultSessionActivityMonitor } from "../sessions/session-activity-monitor"
@@ -62,6 +63,7 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
   const artifactEvaluator = new FileSystemArtifactEvaluator(workspace)
   const eventStore = new FileSystemWorkflowEventStore(workspace)
   const sessionCoordinator = new FileSystemSessionCoordinator(workspace, sessionClient)
+  const reviewSidecarManager = new ReviewSidecarManager(workspace)
   const tickScheduler = new ImmediateTickScheduler()
   const engine = new DefaultWorkflowEngine({
     stateStore,
@@ -77,12 +79,14 @@ export async function createHarness(baseDir: string, options: CreateHarnessOptio
     resolvedConfig,
     skillRegistry,
     imageSummaryService,
+    reviewSidecarManager,
   })
   tickScheduler.setHandler((workflowId) => engine.tick(workflowId))
   const sessionActivityMonitor = new DefaultSessionActivityMonitor(
     baseDir,
     stateStore,
     sessionCoordinator,
+    reviewSidecarManager,
     tickScheduler,
   )
 

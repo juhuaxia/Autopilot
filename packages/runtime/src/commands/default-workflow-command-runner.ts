@@ -1,4 +1,5 @@
 import { initializeWorkflow } from "../bootstrap/initialize-workflow"
+import { getAutopilotPresetDefinition } from "./autopilot-presets"
 import { renderHumanActionBlock } from "../presentation/human-action-renderer"
 import { buildWorkflowOpenRequestWithOptions } from "./workflow-open-request"
 import {
@@ -12,6 +13,8 @@ import type { WorkflowCommandResult, WorkflowCommandRunner } from "./workflow-co
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { WorkflowEventRecord } from "../events/workflow-event-store"
+import { readJsonFile } from "../shared/json-file"
+import type { ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
 function assertWorkflowId(workflowId: string): void {
@@ -60,12 +63,15 @@ async function buildStatusEnhancements(args: {
     lines.push(`Phase summary: ${evaluation.summary}`)
   }
 
-  if (storedSession?.sessionId) {
-    lines.push(`Worker session: ${storedSession.sessionId}`)
-    lines.push(`Worker session phase: ${storedSession.phase}`)
-    lines.push(`Worker session status: ${relevantSession.status}`)
-    lines.push(`Execution mode: ${storedSession.isForegroundPreferred ? "foreground session reuse" : "detached background workflow session"}`)
-  }
+    if (storedSession?.sessionId) {
+      lines.push(`Worker session: ${storedSession.sessionId}`)
+      lines.push(`Worker session phase: ${storedSession.phase}`)
+      lines.push(`Worker session status: ${relevantSession.status}`)
+      lines.push(`Execution mode: ${storedSession.isForegroundPreferred ? "foreground session reuse" : "detached background workflow session"}`)
+      if (storedSession.kind === "reviewer") {
+        lines.push(`Worker session role: ${storedSession.roleName ?? "unknown"}`)
+      }
+    }
 
   if (storedSession?.lastDispatchMode) {
     lines.push(`Dispatch mode: ${storedSession.lastDispatchMode}`)
@@ -77,6 +83,47 @@ async function buildStatusEnhancements(args: {
   if (runtime?.startMode === "direct-develop") {
     lines.push("Workflow start: direct-develop")
   }
+    if (runtime?.presetMode) {
+      lines.push(`Preset mode: ${runtime.presetMode}`)
+    const presetDefinition = getAutopilotPresetDefinition(runtime.presetMode)
+    const configuredReviewOrchestration = harness.resolvedConfig.reviewOrchestration?.[runtime.presetMode]
+    const reviewRoles = configuredReviewOrchestration?.reviewRoles?.length
+      ? configuredReviewOrchestration.reviewRoles
+      : presetDefinition.runtimePolicy.reviewRoles
+    const summaryRules = configuredReviewOrchestration?.summaryRules ?? presetDefinition.runtimePolicy.summaryRules
+    const mergePolicy = configuredReviewOrchestration?.mergePolicy
+    if (reviewRoles?.length) {
+      lines.push(`Review orchestration roles: ${reviewRoles.map((role) => role.name).join(" | ")}`)
+    }
+    if (summaryRules?.length) {
+      lines.push(`Review summary rules: ${summaryRules.join(" | ")}`)
+    }
+    if (mergePolicy) {
+      const mergeLabels = [
+        mergePolicy.conflictResolution ? `conflict=${mergePolicy.conflictResolution}` : null,
+        mergePolicy.unresolvedDisagreement ? `disagreement=${mergePolicy.unresolvedDisagreement}` : null,
+        mergePolicy.summaryPriority ? `summary=${mergePolicy.summaryPriority}` : null,
+        typeof mergePolicy.preserveHigherSeverity === "boolean" ? `preserveHigherSeverity=${mergePolicy.preserveHigherSeverity}` : null,
+      ].filter(Boolean)
+      if (mergeLabels.length > 0) {
+        lines.push(`Review merge policy: ${mergeLabels.join(" | ")}`)
+      }
+    }
+    const reviewerSessions = (await harness.sessionCoordinator.listStoredSessions(workflow.workflowId))
+      .filter((session) => session.kind === "reviewer")
+    if (reviewerSessions.length > 0) {
+      lines.push(`Reviewer sessions: ${reviewerSessions.map((session) => `${session.roleName ?? session.sessionId}:${session.status}`).join(" | ")}`)
+    }
+    const reviewSidecar = await readJsonFile<ReviewSidecarFile>(harness.workspace.reviewSidecarFile(workflow.workflowId))
+    if (reviewSidecar?.entries?.length) {
+      lines.push(`Review sidecar entries: ${reviewSidecar.entries.map((entry) => `${entry.roleName}:${entry.status}`).join(" | ")}`)
+      const summaries = reviewSidecar.entries.filter((entry) => entry.lastSummary)
+      if (summaries.length > 0) {
+        lines.push(`Review sidecar summaries: ${summaries.map((entry) => `${entry.roleName}:${entry.lastSummary}`).join(" | ")}`)
+      }
+      lines.push(`Review ready to consolidate: ${reviewSidecar.readyToConsolidate ? "yes" : "no"}`)
+    }
+  }
   if ((runtime?.skippedPhases?.length ?? 0) > 0) {
     lines.push(`Skipped setup phases: ${runtime?.skippedPhases?.join(" -> ")}`)
   }
@@ -85,6 +132,9 @@ async function buildStatusEnhancements(args: {
   }
   if (runtime?.resyncedFromPhase) {
     lines.push(`Resynced from phase: ${runtime.resyncedFromPhase}`)
+  }
+  if (runtime?.reviewReadyToConsolidate) {
+    lines.push("Review ready to consolidate: yes")
   }
 
   if (evaluation.missing.length > 0) {
@@ -403,7 +453,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         ...(pendingHumanActionWorkflowId ? { pendingHumanActionWorkflowId } : {}),
       }
 
-      const routingDecision = classifyWorkflowIntent(routerInput)
+      const routingDecision: WorkflowRoutingDecision = openRequest.mode
+        ? { action: "new", reason: `preset-requested:${openRequest.mode}` }
+        : classifyWorkflowIntent(routerInput)
 
       const hasAnyWorkflow = activeWorkflows.length > 0 || !!pendingHumanActionWorkflowId
 
@@ -446,6 +498,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             stateStore: harness.stateStore,
             artifactEvaluator: harness.artifactEvaluator,
             userRequest: openRequest.userRequest,
+            ...(openRequest.mode ? { presetMode: openRequest.mode } : {}),
             ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
           })
           if (foregroundSessionId) {

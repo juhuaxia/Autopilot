@@ -270,6 +270,126 @@ describe("workflow open request", () => {
     }
   })
 
+  it("parses /ap-mode: light as a direct-develop preset", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-light-"))
+    try {
+      const result = await buildWorkflowOpenRequest("/ap-mode: light", workspaceRoot)
+
+      expect(result.mode).toBe("light")
+      expect(result.startAt).toBe("develop")
+      expect(result.prompt).toBe("请直接进入 develop。")
+      expect(result.userRequest).toContain("[AUTOPILOT_PRESET]")
+      expect(result.userRequest).toContain("mode=light")
+      expect(result.userRequest).toContain("startAt=develop")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses structured preset mode payloads", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-structured-mode-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        JSON.stringify({
+          prompt: "请帮我按照需求文档开发",
+          mode: "safe",
+        }),
+        workspaceRoot,
+      )
+
+      expect(result.mode).toBe("safe")
+      expect(result.startAt).toBeUndefined()
+      expect(result.prompt).toBe("请帮我按照需求文档开发")
+      expect(result.userRequest).toContain("mode=safe")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses /ap-mode: debug as a debug preset", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-debug-"))
+    try {
+      const result = await buildWorkflowOpenRequest("/ap-mode: debug\n请修复一个偶发报错。", workspaceRoot)
+
+      expect(result.mode).toBe("debug")
+      expect(result.prompt).toContain("请修复一个偶发报错。")
+      expect(result.userRequest).toContain("mode=debug")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses /ap-mode: review-heavy as a review-heavy preset", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-review-heavy-"))
+    try {
+      const result = await buildWorkflowOpenRequest("/ap-mode: review-heavy\n请加强代码审查。", workspaceRoot)
+
+      expect(result.mode).toBe("review-heavy")
+      expect(result.prompt).toContain("请加强代码审查。")
+      expect(result.userRequest).toContain("mode=review-heavy")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses /ap-mode: verify as a verify preset", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-verify-"))
+    try {
+      const result = await buildWorkflowOpenRequest("/ap-mode: verify\n请重点验证这个改动。", workspaceRoot)
+
+      expect(result.mode).toBe("verify")
+      expect(result.prompt).toContain("请重点验证这个改动。")
+      expect(result.userRequest).toContain("mode=verify")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses directive payloads containing quotes and multiple lines without relying on JSON", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-directive-quotes-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        [
+          "请启动 Autopilot workflow，并按下面的请求执行。",
+          "请实现文案 \"Hello\"",
+          "并保留第二行说明。",
+          "/ap-mode: light",
+          "/ap-start-at: develop",
+        ].join("\n"),
+        workspaceRoot,
+      )
+
+      expect(result.mode).toBe("light")
+      expect(result.startAt).toBe("develop")
+      expect(result.prompt).toContain("请实现文案 \"Hello\"")
+      expect(result.prompt).toContain("并保留第二行说明。")
+      expect(result.prompt).not.toContain("/ap-mode: light")
+      expect(result.prompt).not.toContain("/ap-start-at: develop")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("asks for actual task content when a public ap command bridge contains only directives", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-empty-ap-bridge-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        [
+          "请启动 Autopilot workflow，并按下面的请求执行。",
+          "/ap-mode: light",
+          "/ap-start-at: develop",
+        ].join("\n"),
+        workspaceRoot,
+      )
+
+      expect(result.needsClarification).toBe(true)
+      expect(result.clarificationQuestion).toContain("还没有实际需求内容")
+      expect(result.clarificationOptions?.[0]).toContain("/ap-light")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
   it("treats /ap-doc-only input as explicit workflow intent without clarification", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-doc-only-"))
     try {

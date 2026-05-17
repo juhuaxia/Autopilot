@@ -12,6 +12,7 @@ export interface WorkflowWorkspace {
   workflowStateFile(workflowId: string): string
   workflowRuntimeStateFile(workflowId: string): string
   sessionsFile(workflowId: string): string
+  reviewSidecarFile(workflowId: string): string
   eventsFile(workflowId: string): string
   eventsIndexFile(workflowId: string): string
   phaseArtifactFile(workflowId: string, phase: Phase): string
@@ -65,6 +66,10 @@ export class DefaultWorkflowWorkspace implements WorkflowWorkspace {
 
   sessionsFile(workflowId: string): string {
     return join(this.workflowDir(workflowId), "sessions.json")
+  }
+
+  reviewSidecarFile(workflowId: string): string {
+    return join(this.workflowDir(workflowId), "review-sidecar.json")
   }
 
   eventsFile(workflowId: string): string {

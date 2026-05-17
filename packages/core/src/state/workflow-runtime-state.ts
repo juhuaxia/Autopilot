@@ -5,6 +5,7 @@ export type PhaseDispatchAttempts = Partial<Record<"spec_refinement" | "plan" | 
 export type BlockedDecision = "fix" | "accept"
 
 export type WorkflowStartMode = "normal" | "direct-develop"
+export type WorkflowPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify"
 
 export interface WorkflowRuntimeState {
   workflowId: string
@@ -29,10 +30,13 @@ export interface WorkflowRuntimeState {
     decision: BlockedDecision
     decidedAt: string
   } | null
+  presetMode?: WorkflowPresetMode | null
   startMode?: WorkflowStartMode
   skippedPhases?: Array<Extract<import("./phase").Phase, "spec_refinement" | "plan">>
   outOfBandEditsDetected?: boolean
   resyncCount?: number
   lastResyncedAt?: string | null
   resyncedFromPhase?: Extract<import("./phase").Phase, "review" | "test"> | null
+  reviewReadyToConsolidate?: boolean
+  reviewConsolidationDispatched?: boolean
 }

@@ -43,6 +43,8 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      reviewReadyToConsolidate: false,
+      reviewConsolidationDispatched: false,
       pendingBlockedDecision: null,
     })
     await this.eventStore.append({
@@ -74,6 +76,8 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      reviewReadyToConsolidate: false,
+      reviewConsolidationDispatched: false,
       pendingBlockedDecision: null,
     })
     await this.eventStore.append({
@@ -110,6 +114,8 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      reviewReadyToConsolidate: false,
+      reviewConsolidationDispatched: false,
       pendingBlockedDecision: current && current.action.type === "blocked" && decision
         ? {
             actionId: current.id,
@@ -161,6 +167,8 @@ export class DefaultHumanActionService implements HumanActionService {
       developArtifactRepairDispatchPending: false,
       reviewArtifactRepairDispatchPending: false,
       testArtifactRepairDispatchPending: false,
+      reviewReadyToConsolidate: false,
+      reviewConsolidationDispatched: false,
       pendingBlockedDecision: null,
       outOfBandEditsDetected: true,
       resyncCount: (runtime?.resyncCount ?? 0) + 1,

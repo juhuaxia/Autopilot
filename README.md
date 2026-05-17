@@ -92,6 +92,9 @@ Supported directives:
 
 ```text
 /ap-doc: docs/requirement.md
+/ap-mode: light
+/ap-mode: standard
+/ap-mode: safe
 /ap-start-at: develop
 ```
 
@@ -111,10 +114,37 @@ Examples:
 Rules:
 
 - `/ap-doc:` adds an explicit workflow reference document and reads it into the workflow-open request.
+- `/ap-mode:` records a workflow preset so chat input can align with the same mode semantics exposed by public slash commands.
 - `/ap-start-at: develop` explicitly skips refinement and plan, then starts a new workflow directly in `develop`.
 - These directives must be written as standalone lines.
 - Plain prose like `startAt: develop` is treated as normal text and is **not** interpreted as a control directive.
 - A direct-develop workflow still keeps review/test guardrails and records that refinement/plan were skipped.
+
+## Public slash commands
+
+Autopilot also registers discoverable OpenCode slash commands so users can see available workflow modes while typing `/a` in the chat box.
+
+Available commands:
+
+- `/ap-light`: quick develop mode; routes to the `workflow` agent and expands to preset `light` plus direct-develop start
+- `/ap-standard`: standard workflow mode; routes to the `workflow` agent and expands to preset `standard`
+- `/ap-safe`: strict workflow mode; routes to the `workflow` agent and expands to preset `safe`
+- `/ap-debug`: debug workflow mode; routes to the `workflow` agent and expands to preset `debug`
+- `/ap-review-heavy`: review-heavy workflow mode; routes to the `workflow` agent and expands to preset `review-heavy`
+- `/ap-verify`: verify workflow mode; routes to the `workflow` agent and expands to preset `verify`
+
+These commands are thin entrypoints. They autocomplete in OpenCode, run on the `workflow` agent, and expand into Autopilot directive lines that the workflow runtime parses reliably.
+
+Current preset behavior:
+
+- `light`: direct-develop path for small clear tasks
+- `standard`: default phase order with balanced review/test guidance
+- `safe`: default phase order with stricter review/test guidance and deeper understanding during review/test
+- `debug`: default phase order with reproduce/isolate/fix/verify guidance for bug work
+- `review-heavy`: default phase order with extra review scrutiny and regression discovery bias
+- `verify`: default phase order with validation-first guidance and concise review
+
+See `docs/ap-command-presets.md` for the recorded preset design and `docs/review-orchestration-overview.md` for the end-to-end review orchestration and consolidation flow.
 
 ## Workflow recovery
 

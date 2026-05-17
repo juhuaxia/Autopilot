@@ -33,6 +33,30 @@ export type WorkflowPhaseConfig = {
   understandingDepth?: UnderstandingDepth
 }
 
+export type ReviewRoleConfig = {
+  name: string
+  focus: string
+  priority?: number
+  weight?: number
+  mustReport?: string[]
+}
+
+export type ReviewOrchestrationConfig = {
+  reviewRoles?: ReviewRoleConfig[]
+  summaryRules?: string[]
+  mergePolicy?: {
+    conflictResolution?: "prefer_high_priority" | "prefer_high_weight" | "prefer_conservative"
+    unresolvedDisagreement?: "block" | "flag" | "warn"
+    summaryPriority?: "concise" | "balanced" | "detailed"
+    preserveHigherSeverity?: boolean
+  }
+}
+
+export type ResolvedReviewOrchestration = ReviewOrchestrationConfig & {
+  reviewRoles: ReviewRoleConfig[]
+  summaryRules: string[]
+}
+
 /**
  * A declarative risk signal that can elevate understanding depth.
  * When a matching signal is active, the effective depth is upgraded
@@ -50,6 +74,7 @@ export type RiskSignal = {
 export type WorkflowConfigFile = {
   skillRoots?: string[]
   phases?: Partial<Record<WorkflowConfigPhase, WorkflowPhaseConfig>>
+  reviewOrchestration?: Partial<Record<string, ReviewOrchestrationConfig>>
   /**
    * Global risk signal definitions.
    * These are referenced by phase dispatch to determine whether understanding depth
@@ -61,6 +86,7 @@ export type WorkflowConfigFile = {
 export type ResolvedWorkflowConfig = {
   skillRoots: string[]
   phases: Partial<Record<WorkflowConfigPhase, WorkflowPhaseConfig>>
+  reviewOrchestration: Partial<Record<string, ReviewOrchestrationConfig>>
   warnings: string[]
   riskSignals: RiskSignal[]
 }
@@ -104,6 +130,7 @@ export const DEFAULT_AUTOPILOT_CONFIG: WorkflowConfigFile = {
 const EMPTY_CONFIG: ResolvedWorkflowConfig = {
   skillRoots: [],
   phases: {},
+  reviewOrchestration: {},
   warnings: [],
   riskSignals: [],
 }
@@ -148,6 +175,7 @@ function mergeConfigs(base: ResolvedWorkflowConfig, incoming: WorkflowConfigFile
         : []),
     ]),
     phases: { ...base.phases },
+    reviewOrchestration: { ...base.reviewOrchestration },
     warnings: [...base.warnings],
     riskSignals: [...(base.riskSignals ?? [])],
   }
@@ -165,6 +193,62 @@ function mergeConfigs(base: ResolvedWorkflowConfig, incoming: WorkflowConfigFile
       if (signal.id && !incomingIds.has(signal.id)) {
         next.riskSignals.push(signal)
         incomingIds.add(signal.id)
+      }
+    }
+  }
+
+  if (incoming.reviewOrchestration && typeof incoming.reviewOrchestration === "object") {
+    for (const [presetName, orchestration] of Object.entries(incoming.reviewOrchestration)) {
+      if (!orchestration || typeof orchestration !== "object") {
+        continue
+      }
+      const reviewRoles = Array.isArray(orchestration.reviewRoles)
+        ? orchestration.reviewRoles
+            .map((role) => role && typeof role === "object"
+              ? {
+                  name: typeof role.name === "string" ? role.name.trim() : "",
+                  focus: typeof role.focus === "string" ? role.focus.trim() : "",
+                  ...(typeof role.priority === "number" && Number.isFinite(role.priority) ? { priority: role.priority } : {}),
+                  ...(typeof role.weight === "number" && Number.isFinite(role.weight) ? { weight: role.weight } : {}),
+                  ...(Array.isArray(role.mustReport)
+                    ? { mustReport: role.mustReport.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean) }
+                    : {}),
+                }
+              : null)
+            .filter((role): role is ReviewRoleConfig => !!role && role.name.length > 0 && role.focus.length > 0)
+        : undefined
+
+      const summaryRules = Array.isArray(orchestration.summaryRules)
+        ? orchestration.summaryRules.map((rule) => typeof rule === "string" ? rule.trim() : "").filter(Boolean)
+        : undefined
+
+      const mergePolicy = orchestration.mergePolicy && typeof orchestration.mergePolicy === "object"
+        ? {
+            ...(orchestration.mergePolicy.conflictResolution === "prefer_high_priority"
+              || orchestration.mergePolicy.conflictResolution === "prefer_high_weight"
+              || orchestration.mergePolicy.conflictResolution === "prefer_conservative"
+              ? { conflictResolution: orchestration.mergePolicy.conflictResolution }
+              : {}),
+            ...(orchestration.mergePolicy.unresolvedDisagreement === "block"
+              || orchestration.mergePolicy.unresolvedDisagreement === "flag"
+              || orchestration.mergePolicy.unresolvedDisagreement === "warn"
+              ? { unresolvedDisagreement: orchestration.mergePolicy.unresolvedDisagreement }
+              : {}),
+            ...(orchestration.mergePolicy.summaryPriority === "concise"
+              || orchestration.mergePolicy.summaryPriority === "balanced"
+              || orchestration.mergePolicy.summaryPriority === "detailed"
+              ? { summaryPriority: orchestration.mergePolicy.summaryPriority }
+              : {}),
+            ...(typeof orchestration.mergePolicy.preserveHigherSeverity === "boolean"
+              ? { preserveHigherSeverity: orchestration.mergePolicy.preserveHigherSeverity }
+              : {}),
+          }
+        : undefined
+
+      next.reviewOrchestration[presetName] = {
+        ...(reviewRoles ? { reviewRoles } : {}),
+        ...(summaryRules ? { summaryRules } : {}),
+        ...(mergePolicy ? { mergePolicy } : {}),
       }
     }
   }

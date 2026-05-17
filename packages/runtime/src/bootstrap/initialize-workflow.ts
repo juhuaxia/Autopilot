@@ -9,8 +9,9 @@ export async function initializeWorkflow(args: {
   artifactEvaluator: FileSystemArtifactEvaluator
   userRequest?: string
   startAt?: "spec_refinement" | "develop"
+  presetMode?: WorkflowRuntimeState["presetMode"]
 }): Promise<void> {
-  const { workflowId, stateStore, artifactEvaluator, userRequest, startAt = "spec_refinement" } = args
+  const { workflowId, stateStore, artifactEvaluator, userRequest, startAt = "spec_refinement", presetMode = null } = args
   const existing = await stateStore.getWorkflow(workflowId)
   if (existing) {
     return
@@ -46,6 +47,7 @@ export async function initializeWorkflow(args: {
     reviewArtifactRepairDispatchPending: false,
     testArtifactRepairDispatchPending: false,
     pendingBlockedDecision: null,
+    presetMode,
     startMode: startAt === "develop" ? "direct-develop" : "normal",
     skippedPhases: startAt === "develop" ? ["spec_refinement", "plan"] : [],
     outOfBandEditsDetected: false,

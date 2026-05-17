@@ -6,6 +6,8 @@ import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
 import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize-workflow"
 import { readFile } from "node:fs/promises"
 import { writeJsonFile } from "../packages/runtime/src/shared/json-file"
+import { ReviewSidecarManager } from "../packages/runtime/src/review/review-sidecar-manager"
+import { DefaultWorkflowWorkspace } from "../packages/runtime/src/workspace/workflow-workspace"
 
 describe("workflow harness MVP", () => {
   let baseDir = ""
@@ -343,6 +345,598 @@ describe("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("elevates review/test guidance for safe preset workflows", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-safe-preset-review-test"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "修复一个高风险核心流程问题。",
+      presetMode: "safe",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：safe preset 会强化 review 和 test。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] safe")
+    expect(stored?.lastPrompt).toContain("[PRESET_REVIEW_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] safe")
+    expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("adds balanced review/test guidance for standard preset workflows without forcing deep depth", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-standard-preset-review-test"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "实现一个常规中风险改动。",
+      presetMode: "standard",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：standard preset 写入平衡型 review/test 指导。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] standard")
+    expect(stored?.lastPrompt).toContain("[PRESET_REVIEW_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] standard")
+    expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: standard")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("adds debug-specific guidance across refinement, plan, develop, review, and test", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-debug-preset"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "修复一个偶发空白页 bug。",
+      presetMode: "debug",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] debug")
+    expect(stored?.lastPrompt).toContain("[PRESET_REFINEMENT_POLICY]")
+
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：原始空白页问题被修复，且不引入相邻回归。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_PLAN_POLICY]")
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_DEVELOP_POLICY]")
+
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    const reviewFile = await readFile(
+      harness.workspace.phaseArtifactFile(workflowId, "review"),
+      "utf8",
+    )
+    expect(reviewFile).toContain("## Reviewer: Root-Cause Reviewer")
+    expect(reviewFile).toContain("## Reviewer: Regression Reviewer")
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_REVIEW_POLICY]")
+    expect(stored?.lastPrompt).toContain("[REVIEW_ORCHESTRATION]")
+    expect(stored?.lastPrompt).toContain("Root-Cause Reviewer")
+    expect(stored?.lastPrompt).toContain("Regression Reviewer")
+
+    const sidecar = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as { mergeMode?: string; entries?: Array<{ roleName?: string }> }
+    expect(sidecar.mergeMode).toBe("prefer_conservative")
+    expect(sidecar.entries?.some((entry) => entry.roleName === "Root-Cause Reviewer")).toBe(true)
+
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("adds review-heavy specific guidance for review/test", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-heavy-preset"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "请更严格地审查这个实现。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review-heavy 会强化 review/test 审查导向。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] review-heavy")
+    expect(stored?.lastPrompt).toContain("[PRESET_REVIEW_POLICY]")
+    expect(stored?.lastPrompt).toContain("[REVIEW_ORCHESTRATION]")
+    expect(stored?.lastPrompt).toContain("Business Reviewer")
+    expect(stored?.lastPrompt).toContain("Edge Reviewer")
+    expect(stored?.lastPrompt).toContain("Quality Reviewer")
+    expect(stored?.lastPrompt).toContain("must report: product requirement alignment")
+    expect(stored?.lastPrompt).toContain("[REVIEW_SUMMARY_RULES]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("adds verify-specific guidance for review/test without forcing deep depth", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-verify-preset"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "请重点验证这个改动。",
+      presetMode: "verify",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_REFINEMENT_POLICY]")
+    expect(stored?.lastPrompt).toContain("minimum information needed to judge pass/fail")
+
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：verify 会强化验证导向但不过度扩展。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_PLAN_POLICY]")
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_DEVELOP_POLICY]")
+
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const reviewFile = await readFile(
+      harness.workspace.phaseArtifactFile(workflowId, "review"),
+      "utf8",
+    )
+    expect(reviewFile).toContain("## Reviewer: Verification Reviewer")
+    expect(reviewFile).not.toContain("## Reviewer: Edge Reviewer")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[AUTOPILOT_PRESET_MODE] verify")
+    expect(stored?.lastPrompt).toContain("[PRESET_REVIEW_POLICY]")
+    expect(stored?.lastPrompt).toContain("[REVIEW_ORCHESTRATION]")
+    expect(stored?.lastPrompt).toContain("Verification Reviewer")
+    expect(stored?.lastPrompt).toContain("must report: observability, testability, pass/fail validation")
+    expect(stored?.lastPrompt).toContain("[REVIEW_SUMMARY_RULES]")
+    expect(stored?.lastPrompt).toContain("Effective depth: deep")
+
+    await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
+    await harness.tickScheduler.requestTick(workflowId, "review passed")
+
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
+    expect(stored?.lastPrompt).toContain("Effective depth: standard")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("writes reviewer entries into the review sidecar after review dispatch", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-sidecar"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review sidecar 验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review sidecar 会写出 reviewer entries。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const sidecar = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as {
+      workflowId?: string
+      presetMode?: string
+      mergeMode?: string
+      completedAt?: string | null
+      readyToConsolidate?: boolean
+      entries?: Array<{ roleName?: string; status?: string }>
+    }
+
+    expect(sidecar.workflowId).toBe(workflowId)
+    expect(sidecar.presetMode).toBe("review-heavy")
+    expect(sidecar.entries?.length ?? 0).toBeGreaterThan(0)
+    expect(sidecar.entries?.some((entry) => entry.roleName === "Business Reviewer")).toBe(true)
+    expect(sidecar.entries?.every((entry) => entry.status === "running" || entry.status === "idle")).toBe(true)
+    expect(sidecar.completedAt === null || typeof sidecar.completedAt === "string" || sidecar.completedAt === undefined).toBe(true)
+    expect(typeof sidecar.readyToConsolidate === "boolean" || sidecar.readyToConsolidate === undefined).toBe(true)
+
+    const reviewArtifact = await Bun.file(harness.workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("<!-- AUTOPILOT_REVIEW_SIDE_CAR_START -->")
+    expect(reviewArtifact).toContain("## Reviewer Summaries")
+    expect(reviewArtifact).toContain("## Reviewer Findings Summary")
+    expect(reviewArtifact).toContain("## Reviewer Issues")
+    expect(reviewArtifact).toContain("## Candidate Findings For Main Review")
+    expect(reviewArtifact).toContain("## Reviewer Severity Summary")
+    expect(reviewArtifact).toContain("## Reviewer Conclusion Hint")
+    expect(reviewArtifact).toContain("## Reviewer Consolidation Recommendation")
+    expect(reviewArtifact).toContain("## Consolidation Recommendation For Main Conclusion")
+    expect(reviewArtifact).toContain("## Review Merge Context")
+    expect(reviewArtifact).toContain("- completion:")
+    expect(reviewArtifact).toContain("- readyToConsolidate:")
+    expect(reviewArtifact).toContain("若存在 Reviewer Summaries")
+    expect(reviewArtifact).toContain("Candidate Findings For Main Review")
+    expect(reviewArtifact).toContain("Reviewer Conclusion Hint")
+    expect(reviewArtifact).toContain("[Consolidation Recommendation]")
+    expect(reviewArtifact).toContain("recommended main conclusion:")
+    expect(reviewArtifact).toMatch(/## 结论\n(?:PASS|FAIL|待判定)/)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not overwrite an already explicit main review conclusion", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-conclusion-preserve"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review 结论保留验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：已有 PASS/FAIL 结论时不被 consolidation recommendation 覆盖。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const reviewPath = harness.workspace.phaseArtifactFile(workflowId, "review")
+    const original = await Bun.file(reviewPath).text()
+    const explicit = original.replace("## 结论\n待判定", "## 结论\nPASS")
+    await Bun.write(reviewPath, explicit)
+
+    await harness.tickScheduler.requestTick(workflowId, "sidecar rewrite with explicit conclusion")
+
+    const finalContent = await Bun.file(reviewPath).text()
+    expect(finalContent).toContain("## 结论\nPASS")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("marks review consolidation as dispatched once reviewer sidecar is ready", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-consolidation-flag"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review consolidation flag 验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：readyToConsolidate 后会出现 consolidation dispatched 标记。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.tickScheduler.requestTick(workflowId, "review consolidation check")
+
+    const sidecar = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as { readyToConsolidate?: boolean }
+    expect(typeof sidecar.readyToConsolidate === "boolean" || sidecar.readyToConsolidate === undefined).toBe(true)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("synchronizes reviewer session statuses through the activity monitor loop", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-session-sync"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 reviewer session 同步验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：reviewer session 状态会被监控循环同步。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    await harness.tickScheduler.requestTick(workflowId, "review session sync")
+
+    const sessions = await harness.sessionCoordinator.listStoredSessions(workflowId)
+    const reviewerSessions = sessions.filter((session) => session.kind === "reviewer")
+    expect(reviewerSessions.length).toBeGreaterThan(0)
+    expect(reviewerSessions.every((session) => session.status === "idle" || session.status === "failed")).toBe(true)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("dispatches a one-shot consolidation prompt when review sidecar becomes ready", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-consolidation"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 reviewer consolidation 验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：reviewer 全部完成后主 review 会收到 consolidation prompt，且只触发一次。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    await harness.tickScheduler.requestTick(workflowId, "allow reviewer consolidation")
+
+    const reviewArtifact = await Bun.file(harness.workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("## Consolidation Recommendation For Main Conclusion")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("autofills the main review conclusion from a ready consolidation candidate when still pending", async () => {
+    const workspace = new DefaultWorkflowWorkspace(baseDir)
+    const manager = new ReviewSidecarManager(workspace)
+    const workflowId = "wf-review-autofill-pass"
+
+    await Bun.write(
+      workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "待判定",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "示例范围",
+        "",
+        "## 发现的问题",
+        "待审查",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## 历史遗留观察项（非阻塞，可选）",
+        "无",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 结论",
+        "待判定",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await manager.write(workflowId, {
+      workflowId,
+      presetMode: "verify",
+      mergeMode: "prefer_conservative",
+      completedAt: new Date().toISOString(),
+      readyToConsolidate: true,
+      updatedAt: new Date().toISOString(),
+      entries: [
+        {
+          reviewerSessionId: "r1",
+          roleName: "Verification Reviewer",
+          prompt: "prompt",
+          status: "idle",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSummary: "no blocking issue found with high confidence",
+          issueConfidence: "high",
+          issueSource: "no blocking issue found with high confidence",
+        },
+      ],
+    })
+
+    await manager.syncReviewArtifact(workflowId)
+
+    const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("## 状态\nPASS")
+    expect(reviewArtifact).toContain("## 结论\nPASS")
+    expect(reviewArtifact).toContain("[Consolidation Recommendation]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("preserves an explicit review conclusion during sidecar sync", async () => {
+    const workspace = new DefaultWorkflowWorkspace(baseDir)
+    const manager = new ReviewSidecarManager(workspace)
+    const workflowId = "wf-review-conclusion-preserve-explicit"
+
+    await Bun.write(
+      workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "示例范围",
+        "",
+        "## 发现的问题",
+        "无",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## 历史遗留观察项（非阻塞，可选）",
+        "无",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 结论",
+        "PASS",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await manager.write(workflowId, {
+      workflowId,
+      presetMode: "verify",
+      mergeMode: "prefer_conservative",
+      completedAt: new Date().toISOString(),
+      readyToConsolidate: true,
+      updatedAt: new Date().toISOString(),
+      entries: [
+        {
+          reviewerSessionId: "r1",
+          roleName: "Verification Reviewer",
+          prompt: "prompt",
+          status: "idle",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSummary: "no blocking issue found with high confidence",
+          issueConfidence: "high",
+          issueSource: "no blocking issue found with high confidence",
+        },
+      ],
+    })
+
+    await manager.syncReviewArtifact(workflowId)
+
+    const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("## 结论\nPASS")
+    expect(reviewArtifact).toContain("## Consolidation Recommendation For Main Conclusion")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("injects requiredSkills into develop and test phase prompts", async () => {
     const skillRoot = await mkdtemp(join(tmpdir(), "workflow-phase-skills-"))
     await Bun.write(join(skillRoot, "frontend-design.md"), "# frontend-design\nUse existing components first.\n")
@@ -473,6 +1067,177 @@ describe("workflow harness MVP", () => {
     expect(stored?.lastPrompt).toContain("Focus on visual consistency and regression risk.")
 
     await rm(skillRoot, { recursive: true, force: true })
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("allows review orchestration roles to be overridden by autopilot config", async () => {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
+      reviewOrchestration: {
+        verify: {
+          reviewRoles: [
+            {
+              name: "Custom Verification Reviewer",
+              focus: "Check only release-signoff evidence and validation confidence.",
+            },
+          ],
+          mergePolicy: {
+            conflictResolution: "prefer_conservative",
+            unresolvedDisagreement: "flag",
+            summaryPriority: "concise",
+            preserveHigherSeverity: true,
+          },
+        },
+      },
+    })
+
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-orchestration-override"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "请重点验证这个改动。",
+      presetMode: "verify",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review orchestration 可被配置覆盖。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[REVIEW_ORCHESTRATION]")
+    expect(stored?.lastPrompt).toContain("Custom Verification Reviewer")
+    expect(stored?.lastPrompt).toContain("release-signoff evidence")
+    expect(stored?.lastPrompt).toContain("[REVIEW_SUMMARY_RULES]")
+    expect(stored?.lastPrompt).toContain("[REVIEW_MERGE_POLICY]")
+    expect(stored?.lastPrompt).toContain("conflictResolution: prefer_conservative")
+    expect(stored?.lastPrompt).toContain("unresolvedDisagreement: flag")
+    expect(stored?.lastPrompt).toContain("summaryPriority: concise")
+    expect(stored?.lastPrompt).toContain("preserveHigherSeverity: true")
+    expect(stored?.lastPrompt).not.toContain("Verification Reviewer: Check whether the implementation is observable")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("ignores invalid review orchestration roles and falls back to preset defaults", async () => {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
+      reviewOrchestration: {
+        verify: {
+          reviewRoles: [
+            { name: "", focus: "" },
+            { name: "Valid Reviewer", focus: "Valid fallback role.", priority: 2, weight: 1 },
+          ],
+        },
+      },
+    })
+
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-orchestration-invalid-roles"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "请重点验证这个改动。",
+      presetMode: "verify",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：无效 reviewer 会被忽略，合法 reviewer 会生效。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("Valid Reviewer")
+    expect(stored?.lastPrompt).not.toContain("- :")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("sorts review orchestration roles by priority then weight", async () => {
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
+      reviewOrchestration: {
+        verify: {
+          reviewRoles: [
+            {
+              name: "Low Priority Reviewer",
+              focus: "Last in the line.",
+              priority: 2,
+              weight: 10,
+            },
+            {
+              name: "High Priority Reviewer",
+              focus: "First in the line.",
+              priority: 1,
+              weight: 5,
+            },
+            {
+              name: "Tie Break Reviewer A",
+              focus: "Same priority, higher weight.",
+              priority: 3,
+              weight: 20,
+            },
+            {
+              name: "Tie Break Reviewer B",
+              focus: "Same priority, lower weight.",
+              priority: 3,
+              weight: 5,
+            },
+          ],
+        },
+      },
+    })
+
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-orchestration-sorted"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "请重点验证这个改动。",
+      presetMode: "verify",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review orchestration 会按 priority / weight 排序。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("High Priority Reviewer priority=1 weight=5")
+    expect(stored?.lastPrompt).toContain("Low Priority Reviewer priority=2 weight=10")
+    expect(stored?.lastPrompt).toContain("Tie Break Reviewer A priority=3 weight=20")
+    expect(stored?.lastPrompt).toContain("Tie Break Reviewer B priority=3 weight=5")
+    expect(stored?.lastPrompt).toContain("High Priority Reviewer")
+    expect(stored?.lastPrompt?.indexOf("High Priority Reviewer") ?? -1).toBeLessThan(stored?.lastPrompt?.indexOf("Low Priority Reviewer") ?? 9999)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })
   })
 

@@ -143,6 +143,9 @@ export function renderHumanActionBlock(args: {
   if (runtime?.startMode === "direct-develop") {
     lines.push("Start mode: direct-develop")
   }
+  if (runtime?.presetMode) {
+    lines.push(`Preset mode: ${runtime.presetMode}`)
+  }
   if ((runtime?.skippedPhases?.length ?? 0) > 0) {
     lines.push(`Skipped phases: ${runtime?.skippedPhases?.join(", ")}`)
   }

@@ -38,6 +38,7 @@ export interface OpencodeSessionClient {
   getSessionStatus(
     sessionId: string,
   ): Promise<"running" | "idle" | "failed" | "missing">
+  getLatestAssistantText(sessionId: string): Promise<string | null>
   streamEvents(sessionId: string): AsyncIterable<SessionEvent>
 }
 
@@ -70,6 +71,7 @@ export interface PluginSdkClient {
     }): Promise<unknown>
     abort(args: { path: { id: string } }): Promise<unknown>
     status?(args: { path: { id: string } }): Promise<unknown>
+    messages?(args: { path: { id: string } }): Promise<unknown>
     todo?: {
       list?: (args: { path: { id: string } }) => Promise<{ data?: Array<{ id: string; title?: string; completed?: boolean }> }>
       create?: (args: { path: { id: string }; body: { title: string; content?: string } }) => Promise<unknown>
@@ -94,6 +96,7 @@ type InMemorySession = {
   title: string
   status: "running" | "idle" | "failed"
   prompts: string[]
+  lastAssistantText?: string | null
 }
 
 export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
@@ -138,6 +141,7 @@ export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
     session.status = "running"
     this.enqueue(input.sessionId, { type: "session.status", sessionId: input.sessionId, payload: { type: "busy" } })
     session.prompts.push(input.prompt)
+    session.lastAssistantText = `Reviewer session received prompt (${input.prompt.length} chars)`
     session.status = "idle"
     this.enqueue(input.sessionId, { type: "session.idle", sessionId: input.sessionId })
     return {
@@ -160,6 +164,10 @@ export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
   ): Promise<"running" | "idle" | "failed" | "missing"> {
     const session = this.sessions.get(sessionId)
     return session?.status ?? "missing"
+  }
+
+  async getLatestAssistantText(sessionId: string): Promise<string | null> {
+    return this.sessions.get(sessionId)?.lastAssistantText ?? null
   }
 
   async *streamEvents(_sessionId: string): AsyncIterable<SessionEvent> {
@@ -290,6 +298,25 @@ export class SdkOpencodeSessionClient implements OpencodeSessionClient {
     }
   }
 
+  async getLatestAssistantText(sessionId: string): Promise<string | null> {
+    if (!this.client.session.messages) {
+      return null
+    }
+    try {
+      const response = await this.client.session.messages({ path: { id: sessionId } })
+      const items = Array.isArray((response as { data?: unknown }).data)
+        ? (response as { data: Array<{ info?: { role?: string }; parts?: Array<{ type?: string; text?: string }> }> }).data
+        : Array.isArray(response)
+          ? response as Array<{ info?: { role?: string }; parts?: Array<{ type?: string; text?: string }> }>
+          : []
+      const assistantMessages = [...items].reverse().find((item) => item.info?.role === "assistant")
+      const text = assistantMessages?.parts?.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n").trim()
+      return text?.length ? text : null
+    } catch {
+      return null
+    }
+  }
+
   async *streamEvents(sessionId: string): AsyncIterable<SessionEvent> {
     this.ensureEventPump()
     while (true) {
@@ -417,6 +444,20 @@ export class HttpOpencodeSessionClient implements OpencodeSessionClient {
     }
 
     return "idle"
+  }
+
+  async getLatestAssistantText(sessionId: string): Promise<string | null> {
+    try {
+      const data = await this.request<Array<{ info?: { role?: string }; parts?: Array<{ type?: string; text?: string }> }>>(
+        "GET",
+        `/session/${encodeURIComponent(sessionId)}/messages`,
+      )
+      const assistantMessage = [...data].reverse().find((item) => item.info?.role === "assistant")
+      const text = assistantMessage?.parts?.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n").trim()
+      return text?.length ? text : null
+    } catch {
+      return null
+    }
   }
 
   async *streamEvents(_sessionId: string): AsyncIterable<SessionEvent> {

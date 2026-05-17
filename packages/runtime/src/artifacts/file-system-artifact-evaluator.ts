@@ -1,8 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises"
 import type { ArtifactEvaluation, ArtifactEvaluator } from "../../../core/src/artifacts/artifact-evaluator"
 import type { Phase } from "../../../core/src/state/phase"
+import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 import type { Question } from "../../../core/src/human-actions/question"
+import { getAutopilotPresetDefinition } from "../commands/autopilot-presets"
 import { readJsonFile, writeJsonFile } from "../shared/json-file"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 
@@ -582,7 +584,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     ].join("\n")
   }
 
-  private buildReviewArtifactFromDevelopContent(developContent: string): string {
+  private buildReviewArtifactFromDevelopContent(developContent: string, presetMode?: WorkflowRuntimeState["presetMode"]): string {
     const modifiedFiles = extractSectionBody(developContent, "## 修改文件", SECTION_RULES.develop.sections).trim()
       || "待根据开发结果补充。"
     const pairedChanges = extractSectionBody(developContent, "## 配套修改", SECTION_RULES.develop.sections).trim()
@@ -591,6 +593,16 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       || "待根据开发结果补充。"
     const notes = extractSectionBody(developContent, "## 备注", SECTION_RULES.develop.sections).trim()
       || "无"
+    const reviewerSections = presetMode
+      ? (getAutopilotPresetDefinition(presetMode).runtimePolicy.reviewRoles ?? []).map((role) => [
+          `## Reviewer: ${role.name}`,
+          `待 AI 根据以下重点补充：${role.focus}`,
+        ] as const)
+      : [
+          ["## Reviewer: Business", "待 AI 根据业务正确性补充。"],
+          ["## Reviewer: Edge", "待 AI 根据边界与异常补充。"],
+          ["## Reviewer: Quality", "待 AI 根据工程质量补充。"],
+        ]
 
     return [
       "# 审查报告",
@@ -610,11 +622,12 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       "## Section 验收映射检查结果（如适用）",
       "不适用或待 AI 判定。",
       "",
+      ...reviewerSections.flatMap(([heading, body]) => [heading, body, ""]),
       "## 发现的问题",
-      "待 AI 审查开发产物后补充。",
+      "待 AI 审查开发产物后补充。若存在 Reviewer Summaries 或 Candidate Findings For Main Review，请先合并 reviewer sidecar 候选问题后去重整理，再写入主问题清单。",
       "",
       "## 问题严重度汇总",
-      "blocker: 0",
+      "blocker: 0\n\n若 reviewer sidecar 已存在，请按 merge policy 汇总最高优先级/最保守结论。Reviewer Severity Summary 仅作为辅助，不直接覆盖主严重度判断。",
       "",
       "## 历史遗留观察项（非阻塞，可选）",
       notes,
@@ -623,7 +636,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       `修改文件：${modifiedFiles}\n\n配套修改：${pairedChanges}\n\n自检结果：${selfCheck}\n\n请重点关注是否影响既有功能并补充回归风险判断。`,
       "",
       "## 结论",
-      "待判定",
+      "待判定\n\n若 reviewer sidecar 已存在，请结合 Reviewer Summaries、Candidate Findings For Main Review 与 Reviewer Conclusion Hint 输出统一结论；如主结论已由人工或主流程明确填写，则不要被 sidecar 提示覆盖。",
       "",
       "## 报告语言",
       "中文",
@@ -734,7 +747,8 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
 
     if (phase === "review") {
       const developContent = await this.readPhaseArtifact(workflowId, "develop")
-      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent)
+      const runtime = await readJsonFile<WorkflowRuntimeState>(this.workspace.workflowRuntimeStateFile(workflowId))
+      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent, runtime?.presetMode)
       await this.updatePhaseState(workflowId, "review", {
         valid: true,
         readyForNextPhase: false,
@@ -774,7 +788,8 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
   async resetPhaseForResync(workflowId: string, phase: Extract<Phase, "review" | "test">): Promise<void> {
     if (phase === "review") {
       const developContent = await this.readPhaseArtifact(workflowId, "develop")
-      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent)
+      const runtime = await readJsonFile<WorkflowRuntimeState>(this.workspace.workflowRuntimeStateFile(workflowId))
+      const reviewTemplate = this.buildReviewArtifactFromDevelopContent(developContent, runtime?.presetMode)
       await this.updatePhaseState(workflowId, "review", {
         valid: true,
         readyForNextPhase: false,

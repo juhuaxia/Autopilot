@@ -20,6 +20,9 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
     const sessions = await this.loadSessions(workflowId)
     const relevant = [...sessions]
       .reverse()
+      .find((session) => !session.archived && session.kind !== "reviewer")
+      ?? [...sessions]
+      .reverse()
       .find((session) => !session.archived)
 
     if (!relevant) {
@@ -59,15 +62,16 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
         return preferredSessionId
       }
 
-      const createdForeground: SessionDescriptor = {
-        sessionId: preferredSessionId,
-        workflowId,
-        phase,
-        createdAt: new Date().toISOString(),
-        isForegroundPreferred: true,
-        status: "idle",
-        title: `${workflowId}:${phase}`,
-      }
+    const createdForeground: SessionDescriptor = {
+      sessionId: preferredSessionId,
+      workflowId,
+      phase,
+      createdAt: new Date().toISOString(),
+      kind: "main",
+      isForegroundPreferred: true,
+      status: "idle",
+      title: `${workflowId}:${phase}`,
+    }
       sessions.push(createdForeground)
       await this.saveSessions(workflowId, sessions)
       return preferredSessionId
@@ -82,10 +86,20 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
     }
 
     const sessionTitle = `${workflowId}:${phase}`
+    return this.createSession(workflowId, phase, sessionTitle)
+  }
+
+  async createSession(
+    workflowId: string,
+    phase: Phase,
+    title: string,
+    options?: { kind?: "main" | "reviewer"; roleName?: string },
+  ): Promise<string> {
+    const sessions = await this.loadSessions(workflowId)
     const created = await this.sessionClient.createSession({
       workflowId,
       phase,
-      title: sessionTitle,
+      title,
     })
 
     const next: SessionDescriptor = {
@@ -93,8 +107,11 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
       workflowId,
       phase,
       createdAt: new Date().toISOString(),
+      kind: options?.kind ?? "main",
       status: "idle",
-      title: sessionTitle,
+      title,
+      ...(options?.kind ? { kind: options.kind } : {}),
+      ...(options?.roleName ? { roleName: options.roleName } : {}),
     }
 
     sessions.push(next)
@@ -112,6 +129,7 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
       sessionId,
       prompt,
     })
+    const currentStatus = await this.sessionClient.getSessionStatus(sessionId)
 
     const sessions = await this.loadSessions(workflowId)
     const next = sessions.map((session) => {
@@ -121,7 +139,11 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
 
       return {
         ...session,
-        status: injectResult.statusBefore === "failed" ? "failed" as const : "running" as const,
+        status: currentStatus === "failed"
+          ? "failed" as const
+          : currentStatus === "idle"
+            ? "idle" as const
+            : "running" as const,
         lastPrompt: prompt,
         lastDispatchMode: injectResult.dispatchMode,
         lastStatusBeforeDispatch: injectResult.statusBefore,
@@ -143,6 +165,24 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
   async getStoredSession(workflowId: string, sessionId: string): Promise<SessionDescriptor | null> {
     const sessions = await this.loadSessions(workflowId)
     return sessions.find((session) => session.sessionId === sessionId) ?? null
+  }
+
+  async listStoredSessions(workflowId: string): Promise<SessionDescriptor[]> {
+    return this.loadSessions(workflowId)
+  }
+
+  async updateStoredSession(workflowId: string, sessionId: string, patch: Partial<SessionDescriptor>): Promise<void> {
+    const sessions = await this.loadSessions(workflowId)
+    const next = sessions.map((session) => session.sessionId === sessionId ? { ...session, ...patch } : session)
+    await this.saveSessions(workflowId, next)
+  }
+
+  async getSessionStatus(sessionId: string): Promise<"running" | "idle" | "failed" | "missing"> {
+    return this.sessionClient.getSessionStatus(sessionId)
+  }
+
+  async getLatestAssistantText(sessionId: string): Promise<string | null> {
+    return this.sessionClient.getLatestAssistantText(sessionId)
   }
 
   async *streamEvents(session: SessionDescriptor): AsyncIterable<SessionEvent> {

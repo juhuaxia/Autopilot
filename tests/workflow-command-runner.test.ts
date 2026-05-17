@@ -106,6 +106,175 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("stores preset mode when opening a safe workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-safe-preset-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-safe-preset",
+      payload: JSON.stringify({
+        prompt: "请严格检查一个高风险改动。",
+        mode: "safe",
+      }),
+    })
+
+    const runtime = await harness.stateStore.getRuntime("wf-command-safe-preset")
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Preset mode: safe")
+    expect(result.output).toContain("Review orchestration roles:")
+    expect(result.output).toContain("Business Reviewer")
+    expect(result.output).toContain("Review summary rules:")
+    expect(runtime?.presetMode).toBe("safe")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stores preset mode when opening a debug workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-debug-preset-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-debug-preset",
+      payload: JSON.stringify({
+        prompt: "请排查一个偶发空白页问题。",
+        mode: "debug",
+      }),
+    })
+
+    const runtime = await harness.stateStore.getRuntime("wf-command-debug-preset")
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Preset mode: debug")
+    expect(runtime?.presetMode).toBe("debug")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stores preset mode when opening a review-heavy workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-review-heavy-preset-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-review-heavy-preset",
+      payload: JSON.stringify({
+        prompt: "请从 review 角度更严格地检查这个改动。",
+        mode: "review-heavy",
+      }),
+    })
+
+    const runtime = await harness.stateStore.getRuntime("wf-command-review-heavy-preset")
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Preset mode: review-heavy")
+    expect(runtime?.presetMode).toBe("review-heavy")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stores preset mode when opening a verify workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-preset-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-verify-preset",
+      payload: JSON.stringify({
+        prompt: "请重点验证这个需求是否通过。",
+        mode: "verify",
+      }),
+    })
+
+    const runtime = await harness.stateStore.getRuntime("wf-command-verify-preset")
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Preset mode: verify")
+    expect(result.output).toContain("Review orchestration roles:")
+    expect(result.output).toContain("Verification Reviewer")
+    expect(runtime?.presetMode).toBe("verify")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("shows overridden review orchestration details in status output", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-orchestration-status-"))
+    await writeFile(join(baseDir, "autopilot.json"), JSON.stringify({
+      reviewOrchestration: {
+        verify: {
+          reviewRoles: [
+            {
+              name: "Custom Verification Reviewer",
+              focus: "Check release-signoff evidence.",
+            },
+          ],
+          summaryRules: ["Keep the report concise."],
+          mergePolicy: {
+            conflictResolution: "prefer_conservative",
+            unresolvedDisagreement: "flag",
+            summaryPriority: "concise",
+          },
+        },
+      },
+    }, null, 2))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-orchestration-status",
+      payload: JSON.stringify({
+        prompt: "请重点验证这个需求是否通过。",
+        mode: "verify",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Review orchestration roles: Custom Verification Reviewer")
+    expect(result.output).toContain("Review summary rules: Keep the report concise.")
+    expect(result.output).toContain("Review merge policy: conflict=prefer_conservative | disagreement=flag | summary=concise")
+
+    const relevant = await harness.sessionCoordinator.getRelevantSession("wf-command-orchestration-status")
+    const relevantSession = relevant.sessionId ? await harness.sessionCoordinator.getStoredSession("wf-command-orchestration-status", relevant.sessionId) : null
+    expect(relevantSession?.kind).not.toBe("reviewer")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("asks for task details when an ap-light bridge contains no actual request", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-empty-ap-light-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-empty-ap-light",
+      payload: [
+        "请启动 Autopilot workflow，并按下面的请求执行。",
+        "/ap-mode: light",
+        "/ap-start-at: develop",
+      ].join("\n"),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("还没有实际需求内容")
+    expect(result.output).toContain("/ap-light")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("does not perform local regex extraction for unlabeled natural-language docs", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-multi-docs-"))
     const harness = await createHarness(baseDir)

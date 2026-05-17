@@ -1,5 +1,8 @@
 import { access, readdir, readFile } from "node:fs/promises"
 import { isAbsolute, resolve } from "node:path"
+import type { WorkflowPresetMode } from "../../../core/src/state/workflow-runtime-state"
+import { isAutopilotPresetMode } from "./autopilot-presets"
+import { AUTOPILOT_COMMAND_BRIDGE_PROMPT } from "./autopilot-command-presets"
 import type { ImageSummaryService } from "../images/image-summary-service"
 
 const MAX_DOC_CHARS = 12_000
@@ -13,6 +16,7 @@ const COMMON_DOC_DIRS = ["docs", "doc", "spec", "specs", "design", "prd", "produ
 const READ_TARGET_PATTERN = /@read\(([^)]+)\)/g
 const AP_START_AT_PATTERN = /^\s*\/ap-start-at\s*:\s*(develop)\s*$/i
 const AP_DOC_PATTERN = /^\s*\/ap-doc\s*:\s*(.+?)\s*$/i
+const AP_MODE_PATTERN = /^\s*\/ap-mode\s*:\s*([\w-]+)\s*$/i
 
 type ReadTargetKind = "text" | "image" | "unknown"
 
@@ -21,6 +25,7 @@ type WorkflowOpenRequestJson = {
   docPaths?: string[]
   projectContext?: string
   startAt?: "develop"
+  mode?: WorkflowPresetMode
 }
 
 /**
@@ -42,6 +47,7 @@ export interface WorkflowOpenRequest {
   userRequest: string
   prompt: string
   startAt?: "develop"
+  mode?: WorkflowPresetMode
   docPaths: string[]
   readTargets: Array<{ raw: string; path: string; kind: ReadTargetKind }>
   textReadTargets: Array<{ path: string; content: string }>
@@ -60,6 +66,27 @@ export interface WorkflowOpenRequest {
 }
 
 const trimToEmpty = (value: string | undefined): string => value?.trim() ?? ""
+
+function isEmptyAutopilotCommandBridge(prompt: string, rawPayload: string): boolean {
+  const normalizedPrompt = trimToEmpty(prompt)
+  if (!normalizedPrompt) {
+    return false
+  }
+
+  const rawLines = rawPayload
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+
+  const directiveLineCount = rawLines.filter((line) =>
+    AP_START_AT_PATTERN.test(line) || AP_MODE_PATTERN.test(line),
+  ).length
+
+  return normalizedPrompt === AUTOPILOT_COMMAND_BRIDGE_PROMPT
+    && rawLines.length > 0
+    && rawLines[0] === AUTOPILOT_COMMAND_BRIDGE_PROMPT
+    && rawLines.length <= directiveLineCount + 1
+ }
 
 const hasDocExtension = (value: string): boolean => {
   const normalized = value.trim().toLowerCase()
@@ -102,16 +129,18 @@ const normalizeDocumentLikeInput = (value: string): string =>
   value.trim().replace(/^文档\s*[:：]?\s*/i, "")
 
 const isAutopilotDirectiveLine = (value: string): boolean =>
-  AP_START_AT_PATTERN.test(value.trim()) || AP_DOC_PATTERN.test(value.trim())
+  AP_START_AT_PATTERN.test(value.trim()) || AP_DOC_PATTERN.test(value.trim()) || AP_MODE_PATTERN.test(value.trim())
 
 function extractNaturalLanguageDirectives(rawPayload: string): {
   prompt: string
   docPaths: string[]
   startAt?: "develop"
+  mode?: WorkflowPresetMode
   hasExplicitAutopilotDirective: boolean
 } {
   const docPaths: string[] = []
   let startAt: "develop" | undefined
+  let mode: WorkflowPresetMode | undefined
   let hasExplicitAutopilotDirective = false
   const prompt = rawPayload
     .split("\n")
@@ -120,6 +149,13 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
       const startAtMatch = trimmed.match(AP_START_AT_PATTERN)
       if (startAtMatch?.[1]?.toLowerCase() === "develop") {
         startAt = "develop"
+        hasExplicitAutopilotDirective = true
+        return ""
+      }
+
+      const modeMatch = trimmed.match(AP_MODE_PATTERN)
+      if (modeMatch?.[1] && isAutopilotPresetMode(modeMatch[1])) {
+        mode = modeMatch[1]
         hasExplicitAutopilotDirective = true
         return ""
       }
@@ -143,6 +179,7 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
     prompt,
     docPaths: [...new Set(docPaths)],
     hasExplicitAutopilotDirective,
+    ...(mode ? { mode } : {}),
     ...(startAt ? { startAt } : {}),
   }
 }
@@ -185,8 +222,12 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
     const startAt = (parsed as { startAt?: unknown }).startAt === "develop"
       ? "develop"
       : undefined
+    const rawMode = (parsed as { mode?: unknown }).mode
+    const mode = typeof rawMode === "string" && isAutopilotPresetMode(rawMode)
+      ? rawMode as WorkflowPresetMode
+      : undefined
 
-    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined
+    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined || mode !== undefined
     if (!hasKnownKey) {
       return null
     }
@@ -196,6 +237,7 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
       ...(projectContext !== undefined ? { projectContext } : {}),
       ...(docPaths !== undefined ? { docPaths } : {}),
       ...(startAt !== undefined ? { startAt } : {}),
+      ...(mode !== undefined ? { mode } : {}),
     }
   } catch {
     return null
@@ -351,18 +393,19 @@ function inferOpenIntent(args: {
   prompt: string
   docPaths: string[]
   hasExplicitAutopilotDirective: boolean
+  hasStructuredRequest: boolean
 }): {
   needsClarification: boolean
   clarificationQuestion?: string
   clarificationOptions?: string[]
 } {
-  const { rawPayload, prompt, docPaths, hasExplicitAutopilotDirective } = args
+  const { rawPayload, prompt, docPaths, hasExplicitAutopilotDirective, hasStructuredRequest } = args
   const lower = rawPayload.toLowerCase()
   const hasActionHint = actionHints.some((hint) => lower.includes(hint.toLowerCase()))
   const onlyDocLikeInput = docPaths.length > 0 && !hasActionHint && prompt.length < 20
   const explicitDocReference = looksLikeDocumentReference(rawPayload)
 
-  if (explicitDocReference || hasExplicitAutopilotDirective) {
+  if (explicitDocReference || hasExplicitAutopilotDirective || hasStructuredRequest) {
     return { needsClarification: false }
   }
 
@@ -399,21 +442,30 @@ export async function buildWorkflowOpenRequestWithOptions(
   const effectivePrompt = trimToEmpty(structured?.prompt)
     || trimToEmpty(naturalLanguageDirectives?.prompt)
   let prompt = effectivePrompt
+  const mode = structured?.mode ?? naturalLanguageDirectives?.mode
+  const modeDefaultStartAt = mode === "light" ? "develop" : undefined
   if (explicitDocumentReference) {
     prompt = `请基于这份文档启动 workflow。\n${normalizeDocumentLikeInput(rawPayload)}`
   } else if (!prompt && (naturalLanguageDirectives?.docPaths.length ?? 0) > 0) {
-    prompt = naturalLanguageDirectives?.startAt === "develop"
+    prompt = (naturalLanguageDirectives?.startAt ?? modeDefaultStartAt) === "develop"
       ? "请基于需求文档直接进入 develop。"
       : "请基于需求文档启动 workflow。"
-  } else if (!prompt && naturalLanguageDirectives?.startAt === "develop") {
+  } else if (!prompt && (naturalLanguageDirectives?.startAt ?? modeDefaultStartAt) === "develop") {
     prompt = "请直接进入 develop。"
+  } else if (!prompt && mode === "safe") {
+    prompt = "请启动严格审查模式的 workflow。"
+  } else if (!prompt && mode === "debug") {
+    prompt = "请启动问题排查与修复模式的 workflow。"
+  } else if (!prompt && mode === "standard") {
+    prompt = "请启动标准模式的 workflow。"
   } else if (!prompt) {
     prompt = rawPayload
   }
   const structuredDocPaths = (structured?.docPaths ?? []).map((item) => item.trim()).filter((item) => item.length > 0)
   const directiveDocPaths = naturalLanguageDirectives?.docPaths ?? []
-  const startAt = structured?.startAt ?? naturalLanguageDirectives?.startAt
+  const startAt = structured?.startAt ?? naturalLanguageDirectives?.startAt ?? modeDefaultStartAt
   const docPaths = [...new Set([...structuredDocPaths, ...directiveDocPaths])]
+  const emptyAutopilotCommandBridge = isEmptyAutopilotCommandBridge(prompt, rawPayload)
   const shouldRecallCandidates = !structured && docPaths.length === 0
   const candidateDocs = shouldRecallCandidates ? await discoverCandidateDocs(workspaceRoot) : []
   const projectContext = trimToEmpty(structured?.projectContext)
@@ -423,6 +475,7 @@ export async function buildWorkflowOpenRequestWithOptions(
     prompt,
     docPaths,
     hasExplicitAutopilotDirective: naturalLanguageDirectives?.hasExplicitAutopilotDirective ?? false,
+    hasStructuredRequest: structured !== null,
   })
   const continuationIntent = detectContinuationIntent(rawPayload)
   const readTargets = extractReadTargets(prompt)
@@ -430,6 +483,15 @@ export async function buildWorkflowOpenRequestWithOptions(
   const imageReadTargets: Array<{ path: string }> = []
 
   const lines: string[] = []
+  if (mode) {
+    lines.push("[AUTOPILOT_PRESET]")
+    lines.push(`mode=${mode}`)
+    if (startAt) {
+      lines.push(`startAt=${startAt}`)
+    }
+    lines.push("[AUTOPILOT_PRESET_POLICY] This preset came from an OpenCode slash command or explicit Autopilot directive. Honor it when choosing workflow depth and phase entry.")
+    lines.push("")
+  }
   lines.push("[USER_PROMPT]")
   lines.push(prompt || "请先基于项目和需求文档完成 spec_refinement。")
 
@@ -545,13 +607,18 @@ export async function buildWorkflowOpenRequestWithOptions(
     userRequest: lines.join("\n"),
     prompt,
     ...(startAt ? { startAt } : {}),
+    ...(mode ? { mode } : {}),
     docPaths,
     readTargets,
     textReadTargets,
     imageReadTargets,
-    needsClarification: intent.needsClarification,
-    ...(intent.clarificationQuestion ? { clarificationQuestion: intent.clarificationQuestion } : {}),
-    ...(intent.clarificationOptions ? { clarificationOptions: intent.clarificationOptions } : {}),
+    needsClarification: emptyAutopilotCommandBridge ? true : intent.needsClarification,
+    ...((emptyAutopilotCommandBridge || intent.clarificationQuestion)
+      ? { clarificationQuestion: emptyAutopilotCommandBridge ? "`/ap-*` 命令后还没有实际需求内容。请在命令后补充你要执行的任务。" : intent.clarificationQuestion }
+      : {}),
+    ...((emptyAutopilotCommandBridge || intent.clarificationOptions)
+      ? { clarificationOptions: emptyAutopilotCommandBridge ? ["示例：/ap-light 根据 docs/requirement.md 修复登录按钮文案"] : intent.clarificationOptions }
+      : {}),
     ...(projectContext ? { projectContext } : {}),
     ...(continuationIntent ? { continuationIntent } : {}),
   }

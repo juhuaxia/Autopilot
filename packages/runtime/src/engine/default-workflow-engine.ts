@@ -1,12 +1,62 @@
 import { readFile } from "node:fs/promises"
 import type { Phase } from "../../../core/src/state/phase"
 import { ARTIFACT_REPAIR_REASON_PREFIX } from "../../../core/src/transitions/default-phase-transition"
+import { getAutopilotPresetDefinition } from "../commands/autopilot-presets"
+import type { ResolvedReviewOrchestration } from "../config/workflow-config"
 import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-registry"
 import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
+import { readJsonFile } from "../shared/json-file"
+import type { ReviewSidecarEntry, ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
 
 export class DefaultWorkflowEngine implements WorkflowEngine {
   constructor(private readonly deps: WorkflowEngineDeps) {}
+
+  private async writeReviewSidecar(args: {
+    workflowId: string
+    presetMode: string | null
+    mergeMode: string | null
+    entries: ReviewSidecarEntry[]
+  }): Promise<void> {
+    await this.deps.reviewSidecarManager.write(args.workflowId, {
+      workflowId: args.workflowId,
+      presetMode: args.presetMode,
+      mergeMode: args.mergeMode,
+      updatedAt: new Date().toISOString(),
+      entries: args.entries.map((entry) => ({
+        ...entry,
+        startedAt: entry.startedAt,
+        updatedAt: new Date().toISOString(),
+      })),
+    })
+  }
+
+  private async dispatchReviewerSessions(args: {
+    workflowId: string
+    reviewRoles: Array<{ name: string; focus: string; priority?: number; weight?: number; mustReport?: string[] }>
+    prompt: string
+  }): Promise<void> {
+    for (const role of args.reviewRoles) {
+      const sessionId = await this.deps.sessionCoordinator.createSession(
+        args.workflowId,
+        "review",
+        `${args.workflowId}:review:${role.name}`,
+        {
+          kind: "reviewer",
+          roleName: role.name,
+        },
+      )
+      const rolePrompt = [
+        "[REVIEWER_ROLE]",
+        `name=${role.name}`,
+        `focus=${role.focus}`,
+        ...(role.mustReport?.length ? [`mustReport=${role.mustReport.join(", ")}`] : []),
+        "",
+        args.prompt,
+      ].join("\n")
+      await this.deps.sessionCoordinator.inject(args.workflowId, sessionId, rolePrompt)
+    }
+  }
 
   private buildArtifactRepairPromptLines(args: {
     phase: Extract<Phase, "develop" | "review" | "test">
@@ -60,6 +110,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
 
     const workflow = await this.deps.stateStore.getWorkflow(workflowId)
     const artifact = workflow ? await this.deps.artifactEvaluator.evaluate(workflow) : null
+    const runtime = await this.deps.stateStore.getRuntime(workflowId)
     let currentContent = ""
     try {
       currentContent = await readFile(
@@ -103,6 +154,52 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       `[GOAL] ${phaseGoalByType[phase]}`,
       `[REASON] ${reason}`,
     ]
+
+    const presetMode = runtime?.presetMode ?? null
+    const presetDefinition = presetMode ? getAutopilotPresetDefinition(presetMode) : null
+    const configuredReviewOrchestration = presetMode ? this.deps.resolvedConfig?.reviewOrchestration?.[presetMode] : undefined
+    const reviewRoles = configuredReviewOrchestration?.reviewRoles?.length
+      ? configuredReviewOrchestration.reviewRoles
+      : presetDefinition?.runtimePolicy.reviewRoles
+    const summaryRules = presetMode
+      ? configuredReviewOrchestration?.summaryRules ?? presetDefinition?.runtimePolicy.summaryRules
+      : null
+    const mergePolicy = presetMode
+      ? configuredReviewOrchestration?.mergePolicy
+      : null
+    const reviewerMergeMode = mergePolicy?.conflictResolution ?? "prefer_conservative"
+    const reviewSidecarFile = presetMode ? this.deps.workspace.reviewSidecarFile(workflowId) : null
+    const sortedReviewRoles = reviewRoles
+      ? [...reviewRoles].sort((left, right) => {
+          const leftPriority = left.priority ?? Number.POSITIVE_INFINITY
+          const rightPriority = right.priority ?? Number.POSITIVE_INFINITY
+          if (leftPriority !== rightPriority) {
+            return leftPriority - rightPriority
+          }
+          const leftWeight = left.weight ?? 0
+          const rightWeight = right.weight ?? 0
+          if (leftWeight !== rightWeight) {
+            return rightWeight - leftWeight
+          }
+          return left.name.localeCompare(right.name)
+        })
+      : null
+    if (presetMode) {
+      lines.push(`[AUTOPILOT_PRESET_MODE] ${presetMode}`)
+      if (presetMode === "light") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] light mode keeps the workflow tight and fast. Preserve the direct-develop setup when present, avoid unnecessary expansion, and focus on the smallest correct change with essential review/test guardrails.")
+      } else if (presetMode === "standard") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] standard mode balances speed and safety. Keep analysis proportional, verify direct dependencies and regressions, and avoid both under-review and unnecessary over-analysis.")
+      } else if (presetMode === "safe") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] safe mode prioritizes risk reduction over speed. Be conservative about scope assumptions, expand impact tracing, and produce stricter review and verification evidence before concluding pass states.")
+      } else if (presetMode === "debug") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] debug mode prioritizes root-cause isolation and fix validation. Reproduce the failure signal, trace the faulty path, avoid unrelated refactors, and prove the fix against the original symptom plus nearby regressions.")
+      } else if (presetMode === "review-heavy") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] review-heavy mode prioritizes defect discovery and review confidence. Spend more effort on scrutiny, edge cases, and regression reasoning before treating implementation quality as acceptable.")
+      } else if (presetMode === "verify") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] verify mode prioritizes validation evidence and test confidence. Keep implementation analysis focused on what is needed to prove pass/fail outcomes and regression safety.")
+      }
+    }
 
     if (isArtifactOnlyRepair) {
       const repairPhase = phase as Extract<Phase, "develop" | "review" | "test">
@@ -189,25 +286,85 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
     lines.push("[POLICY] Autofill what can be safely inferred. Preserve existing content. Ask humans only for genuine ambiguity. Keep section headings unchanged. Never import or reference icons, images, assets, or components unless you have verified they already exist in the repository. Do not invent import paths, filenames, asset names, or icon exports.")
     if (phase === "spec_refinement") {
       lines.push("[AI_INTAKE_POLICY] Interpret user natural language directly. Extract requirement intent, infer referenced document locations from user wording, and read project documents with your tools before updating artifact sections. Use [DOC_CANDIDATES] as recall-only hints; make final relevance decisions semantically. Honor [READ_TARGETS] as explicit read instructions when present. For [READ_TARGET_IMAGE_PATH] entries, inspect the image with available tools if supported. If image understanding is unavailable, explicitly record that limitation instead of inventing image content. Do not require user to provide structured JSON.")
+      if (presetDefinition?.runtimePolicy.refine) {
+        lines.push(presetDefinition.runtimePolicy.refine)
+      }
     }
     if (phase === "plan") {
       lines.push("[PLAN_POLICY] Build a concrete implementation plan from the refinement artifact. First identify the actual feature entry point in the codebase. If behavior is controlled by parent components, parent routes, shared modules, imported functions, composables, stores, services, APIs, or other upstream/downstream dependencies, continue tracing them until the behavior boundary is clear. Replace placeholder text with repository-specific scope, file impact, implementation steps, risk analysis, approval-ready detail, explicit regression considerations, and evidence of dependency/impact tracing where relevant. If the refinement artifact includes [READ_TARGETS], treat them as explicit sources that must be reflected in the plan. For [READ_TARGET_IMAGE_PATH] entries, use available image-reading tools when supported; otherwise explicitly note that image content could not be extracted. Keep section headings unchanged.")
+      if (presetDefinition?.runtimePolicy.plan) {
+        lines.push(presetDefinition.runtimePolicy.plan)
+      }
     }
     if (phase === "develop") {
       lines.push("[DEVELOP_POLICY] Execute against the approved plan artifact. Before editing a leaf file, verify whether parent components, entry points, routes, stores, composables, services, helpers, imported functions, or shared modules also participate in the feature logic. If they do, continue tracing and update the implementation scope accordingly. When icons, images, or other assets are missing, do not create non-existent imports. Either temporarily reuse an existing in-repo asset that actually exists and disclose that substitution in the final report, or ask the user for the correct resource when no acceptable existing asset fits. Update code first, then rewrite the develop artifact with actual changed files, supporting changes, self-check evidence, and explicit regression checks for impacted existing behavior. Set ## 状态 to COMPLETED only when implementation and validation are truly done.")
+      if (presetDefinition?.runtimePolicy.develop) {
+        lines.push(presetDefinition.runtimePolicy.develop)
+      }
     }
     if (phase === "review") {
       lines.push("[REVIEW_POLICY] Review the implementation against the develop artifact and plan intent. Explicitly check whether the implementation missed parent components, parent routes, imported dependencies, shared modules, services, stores, composables, helpers, or other upstream/downstream files that should have been traced. Also fail the review if the implementation introduces unverified icon/image/asset/component imports, fabricated resource references, or non-existent export names. Record concrete findings, severity summary, dependency-tracing gaps if any, regression risk to existing functionality, and set explicit pass/fail conclusion in the review artifact. Keep section headings unchanged.")
+      if (presetDefinition?.runtimePolicy.review) {
+        lines.push(presetDefinition.runtimePolicy.review)
+      }
+      if (sortedReviewRoles?.length) {
+        lines.push("[REVIEW_ORCHESTRATION]")
+        lines.push("Simulate a multi-reviewer review pass. Evaluate the implementation from each role below, then merge the findings into one consolidated review artifact with deduplicated issues and a single pass/fail conclusion.")
+        for (const role of sortedReviewRoles) {
+          const priorityLabel = typeof role.priority === "number" ? ` priority=${role.priority}` : ""
+          const weightLabel = typeof role.weight === "number" ? ` weight=${role.weight}` : ""
+          lines.push(`- ${role.name}${priorityLabel}${weightLabel}: ${role.focus}`)
+          if (role.mustReport?.length) {
+            lines.push(`  must report: ${role.mustReport.join(", ")}`)
+          }
+        }
+        if (summaryRules?.length) {
+          lines.push("[REVIEW_SUMMARY_RULES]")
+          lines.push(...summaryRules.map((rule) => `- ${rule}`))
+        }
+        if (mergePolicy) {
+          lines.push("[REVIEW_MERGE_POLICY]")
+          if (mergePolicy.conflictResolution) {
+            lines.push(`- conflictResolution: ${mergePolicy.conflictResolution}`)
+          }
+          if (mergePolicy.unresolvedDisagreement) {
+            lines.push(`- unresolvedDisagreement: ${mergePolicy.unresolvedDisagreement}`)
+          }
+          if (mergePolicy.summaryPriority) {
+            lines.push(`- summaryPriority: ${mergePolicy.summaryPriority}`)
+          }
+          if (typeof mergePolicy.preserveHigherSeverity === "boolean") {
+            lines.push(`- preserveHigherSeverity: ${mergePolicy.preserveHigherSeverity}`)
+          }
+          lines.push(`- reviewerCount: ${sortedReviewRoles.length}`)
+          lines.push(`- mergeMode: ${reviewerMergeMode}`)
+        }
+      }
+      if (reviewSidecarFile) {
+        const sidecar = await readJsonFile<{ entries?: Array<{ reviewerSessionId: string; roleName: string; prompt: string; status: string; startedAt?: string; updatedAt?: string; lastError?: string }> }>(reviewSidecarFile)
+        if (sidecar?.entries?.length) {
+          lines.push("[REVIEW_SIDECAR]")
+          for (const entry of sidecar.entries) {
+            lines.push(`- ${entry.roleName} (${entry.status}) ${entry.reviewerSessionId}`)
+          }
+        }
+      }
     }
     if (phase === "test") {
       lines.push("[TEST_POLICY] Validate the implementation and review findings. Ensure testing covers both the requested behavior and any affected upstream/downstream files, parent-controlled flows, shared dependencies, and previously working functionality touched by the traced impact boundary. Update the test artifact with executed checks, failures, regression evidence for impacted existing features, coverage summary, and set explicit pass/fail conclusion. Keep section headings unchanged.")
+      if (presetDefinition?.runtimePolicy.test) {
+        lines.push(presetDefinition.runtimePolicy.test)
+      }
     }
 
     if (this.isArtifactPhase(phase) && this.deps.resolvedConfig) {
-      const effectiveDepth = resolveEffectiveUnderstandingDepth({
+      let effectiveDepth = resolveEffectiveUnderstandingDepth({
         phase: phase as WorkflowConfigPhase,
         config: this.deps.resolvedConfig,
       })
+      if (presetDefinition?.runtimePolicy.forceDeepReviewAndTest && (phase === "review" || phase === "test") && effectiveDepth !== "deep") {
+        effectiveDepth = "deep"
+      }
       const depthGuidance = understandingGuidanceByDepth[effectiveDepth]
       const activeRiskSignals = this.deps.resolvedConfig.riskSignals ?? []
       lines.push("[UNDERSTANDING_POLICY]")
@@ -351,6 +508,8 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           blockedFromPhase: null,
           waitingHumanActionId: null,
           consecutiveFailures: 0,
+          reviewReadyToConsolidate: false,
+          reviewConsolidationDispatched: false,
           phaseDispatchAttempts: {},
           lastArtifactSignalSignature: null,
           developArtifactRepairDispatchPending: false,
@@ -432,6 +591,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           blockedFromPhase: null,
           lastContinuationAt: new Date().toISOString(),
           consecutiveFailures: 0,
+          reviewConsolidationDispatched: runtime.reviewConsolidationDispatched || (action.phase === "review" && action.reason.includes("reviewer consolidation")),
           lastArtifactSignalSignature: action.phase === "spec_refinement" || action.phase === "plan" || action.phase === "develop" || action.phase === "review" || action.phase === "test"
             ? [
                 action.phase,
@@ -476,6 +636,64 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           sessionId,
           prompt,
         )
+        if (action.phase === "review") {
+          const presetMode = runtime.presetMode ?? null
+          const presetDefinition = presetMode ? getAutopilotPresetDefinition(presetMode) : null
+          const configuredReviewOrchestration = presetMode ? this.deps.resolvedConfig?.reviewOrchestration?.[presetMode] : undefined
+          const reviewRoles = configuredReviewOrchestration?.reviewRoles?.length
+            ? configuredReviewOrchestration.reviewRoles
+            : presetDefinition?.runtimePolicy.reviewRoles
+          const mergeMode = configuredReviewOrchestration?.mergePolicy?.conflictResolution ?? "prefer_conservative"
+
+          if (reviewRoles?.length) {
+            const reviewerSessions: ReviewSidecarEntry[] = []
+            for (const role of reviewRoles) {
+              const reviewerSessionId = await this.deps.sessionCoordinator.createSession(
+                workflowId,
+                "review",
+                `${workflowId}:review:${role.name}`,
+                {
+                  kind: "reviewer",
+                  roleName: role.name,
+                },
+              )
+              const rolePrompt = [
+                "[REVIEWER_ROLE]",
+                `name=${role.name}`,
+                `focus=${role.focus}`,
+                ...(role.mustReport?.length ? [`mustReport=${role.mustReport.join(", ")}`] : []),
+                "",
+                prompt,
+              ].join("\n")
+              reviewerSessions.push({
+                reviewerSessionId,
+                roleName: role.name,
+                prompt: rolePrompt,
+                status: "pending",
+                startedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              })
+              await this.deps.sessionCoordinator.inject(workflowId, reviewerSessionId, rolePrompt)
+              const reviewerStored = await this.deps.sessionCoordinator.getStoredSession(workflowId, reviewerSessionId)
+              const latestReviewerSession = reviewerSessions[reviewerSessions.length - 1]
+              if (latestReviewerSession) {
+                latestReviewerSession.status = reviewerStored?.status ?? "pending"
+              }
+            }
+            await this.writeReviewSidecar({
+              workflowId,
+              presetMode: runtime.presetMode ?? null,
+              mergeMode,
+              entries: reviewerSessions,
+            })
+            await this.deps.reviewSidecarManager.markCompletedIfSettled(workflowId)
+            const sidecar = await this.deps.reviewSidecarManager.read(workflowId)
+            if (sidecar?.readyToConsolidate) {
+              await this.deps.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+            }
+            await this.deps.reviewSidecarManager.syncReviewArtifact(workflowId)
+          }
+        }
         await this.deps.stateStore.updateRuntime(workflowId, runtimePatch)
         await this.deps.eventStore.append({
           workflowId,
