@@ -126,16 +126,18 @@ Autopilot also registers discoverable OpenCode slash commands so users can see a
 
 Available commands:
 
-- `/ap-light`: quick develop mode; routes to the `workflow` agent and expands to preset `light` plus direct-develop start
-- `/ap-standard`: standard workflow mode; routes to the `workflow` agent and expands to preset `standard`
-- `/ap-safe`: strict workflow mode; routes to the `workflow` agent and expands to preset `safe`
-- `/ap-debug`: debug workflow mode; routes to the `workflow` agent and expands to preset `debug`
-- `/ap-review-heavy`: review-heavy workflow mode; routes to the `workflow` agent and expands to preset `review-heavy`
-- `/ap-verify`: verify workflow mode; routes to the `workflow` agent and expands to preset `verify`
+- `/ap-light`: full workflow mode; routes to the `workflow` agent and expands to preset `light` plus direct-develop start
+- `/ap-standard`: full workflow mode; routes to the `workflow` agent and expands to preset `standard`
+- `/ap-safe`: full workflow mode; routes to the `workflow` agent and expands to preset `safe`
+- `/ap-debug`: full workflow mode; routes to the `workflow` agent and expands to preset `debug`
+- `/ap-review-heavy`: node review mode; on completed workflow context it creates a review node run, otherwise it expands to preset `review-heavy`
+- `/ap-test-heavy`: node test mode; creates a test node run against an existing workflow context
+- `/ap-develop`: node develop mode; creates a develop node run against an existing workflow context
+- `/ap-verify`: node verify mode; creates a verify node run against an existing workflow context
 
 These commands are thin entrypoints. They autocomplete in OpenCode, run on the `workflow` agent, and expand into Autopilot directive lines that the workflow runtime parses reliably.
 
-Current preset behavior:
+Current preset / node behavior:
 
 - `light`: direct-develop path for small clear tasks
 - `standard`: default phase order with balanced review/test guidance
@@ -143,6 +145,18 @@ Current preset behavior:
 - `debug`: default phase order with reproduce/isolate/fix/verify guidance for bug work
 - `review-heavy`: default phase order with extra review scrutiny and regression discovery bias
 - `verify`: default phase order with validation-first guidance and concise review
+- `review-heavy` node runs: `review -> done`
+- `test-heavy` node runs: `test -> done`
+- `develop` node runs: `develop -> done`
+- `verify` node runs: `test -> done`
+
+Node run metadata:
+
+- `runKind`: `full`, `review-heavy`, `test-heavy`, `develop`, or `verify`
+- `parentWorkflowId`: the immediate parent workflow/run
+- `sourceWorkflowId`: the original root workflow that supplied the artifacts
+
+Node runs are intended for follow-up review, test, develop, or verify work on top of an existing completed workflow. They reuse the source workflow artifacts for context, but they do not overwrite the original workflow history.
 
 See `docs/ap-command-presets.md` for the recorded preset design and `docs/review-orchestration-overview.md` for the end-to-end review orchestration and consolidation flow.
 

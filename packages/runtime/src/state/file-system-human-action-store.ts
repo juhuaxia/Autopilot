@@ -28,7 +28,8 @@ export class FileSystemHumanActionStore implements HumanActionStore {
   private async updateStatus(actionId: string, status: HumanActionStatus): Promise<void> {
     const current = await this.findByActionId(actionId)
     if (!current) {
-      throw new Error(`Human action not found: ${actionId}`)
+      // Best effort: the owning workflow may have been archived and deleted.
+      return
     }
 
     const next: HumanActionRecord = {

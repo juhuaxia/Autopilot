@@ -589,6 +589,7 @@ describe("workflow harness MVP", () => {
     expect(stored?.lastPrompt).toContain("Verification Reviewer")
     expect(stored?.lastPrompt).toContain("must report: observability, testability, pass/fail validation")
     expect(stored?.lastPrompt).toContain("[REVIEW_SUMMARY_RULES]")
+    expect(stored?.lastPrompt).toContain("Current code and current validation")
     expect(stored?.lastPrompt).toContain("Effective depth: deep")
 
     await harness.artifactEvaluator.setReviewReport(workflowId, "pass", false)
@@ -598,6 +599,7 @@ describe("workflow harness MVP", () => {
     stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
     expect(stored?.lastPrompt).toContain("[PRESET_TEST_POLICY]")
     expect(stored?.lastPrompt).toContain("Effective depth: standard")
+    expect(stored?.lastPrompt).toContain("Unverified content must be recorded")
 
     await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })

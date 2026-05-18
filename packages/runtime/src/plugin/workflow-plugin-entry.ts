@@ -36,7 +36,7 @@ type PluginEventInput = {
 type NativeAgentConfig = {
   mode: "primary" | "subagent" | "all"
   description: string
-  model: string
+  model?: string
   prompt: string
   tools: Record<string, boolean>
 }
@@ -73,7 +73,7 @@ type WorkflowPrimaryAgentMetadata = {
   name: string
   mode: "primary"
   description: string
-  model: string
+  model?: string
   tools: Record<string, boolean>
   promptFile: string
   manifestFile: string
@@ -115,7 +115,6 @@ Hard rules:
 `
 
 const WORKFLOW_PRIMARY_AGENT_DESCRIPTION = "Primary workflow agent that drives refine->plan->develop->review->test via workflow tools"
-const WORKFLOW_PRIMARY_AGENT_MODEL = "openai/gpt-5.5"
 
 const AUTOPILOT_HOST_COMMANDS = Object.fromEntries(
   Object.values(AUTOPILOT_PRESET_DEFINITIONS).map((preset) => [
@@ -131,12 +130,29 @@ const AUTOPILOT_HOST_COMMANDS = Object.fromEntries(
   ]),
 ) as Record<string, { description: string; template: string; agent: string }>
 
+const AUTOPILOT_NODE_COMMANDS = {
+  "ap-test-heavy": {
+    description: "Test-heavy node mode: run focused verification/test reporting against an existing workflow context",
+    template: `${buildAutopilotCommandPayload({ preset: "verify", prompt: "$ARGUMENTS" })}\n/ap-node-run: test-heavy`,
+    agent: "workflow",
+  },
+  "ap-develop": {
+    description: "Develop node mode: run focused develop/fix work and produce a standard develop report against an existing workflow context",
+    template: `${AUTOPILOT_PRESET_DEFINITIONS.safe.bridge.prompt}\n$ARGUMENTS\n/ap-node-run: develop`,
+    agent: "workflow",
+  },
+  "ap-verify": {
+    description: "Verify node mode: run focused verification against an existing workflow context and produce a verify report",
+    template: `${AUTOPILOT_PRESET_DEFINITIONS.verify.bridge.prompt}\n$ARGUMENTS\n/ap-node-run: verify`,
+    agent: "workflow",
+  },
+} as const
+
 function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadata {
   return {
     name: "workflow",
     mode: "primary",
     description: WORKFLOW_PRIMARY_AGENT_DESCRIPTION,
-    model: WORKFLOW_PRIMARY_AGENT_MODEL,
     tools: {
       workflow_open: true,
       workflow_attach: true,
@@ -151,19 +167,40 @@ function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadat
   }
 }
 
-function buildWorkflowTodos(phase: Phase, status: WorkflowStatus): Array<{ title: string; completed: boolean }> {
+function buildWorkflowTodos(args: {
+  phase: Phase
+  status: WorkflowStatus
+  runKind?: "full" | "review-heavy" | "test-heavy" | "develop" | "verify" | null
+}): Array<{ title: string; completed: boolean }> {
+  const { phase, status, runKind } = args
+  const titlePrefix = !runKind || runKind === "full"
+    ? "Workflow"
+    : runKind === "review-heavy"
+      ? "Review Run"
+      : runKind === "test-heavy"
+        ? "Test Run"
+        : runKind === "develop"
+          ? "Develop Run"
+          : "Verify Run"
   const phases: Array<{ key: Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test" | "done">; title: string }> = [
-    { key: "spec_refinement", title: "Workflow / Refinement" },
-    { key: "plan", title: "Workflow / Plan" },
-    { key: "develop", title: "Workflow / Develop" },
-    { key: "review", title: "Workflow / Review" },
-    { key: "test", title: "Workflow / Test" },
-    { key: "done", title: "Workflow / Done" },
+    { key: "spec_refinement", title: `${titlePrefix} / Refinement` },
+    { key: "plan", title: `${titlePrefix} / Plan` },
+    { key: "develop", title: `${titlePrefix} / Develop` },
+    { key: "review", title: `${titlePrefix} / Review` },
+    { key: "test", title: `${titlePrefix} / Test` },
+    { key: "done", title: `${titlePrefix} / Done` },
   ]
-  const currentIndex = phases.findIndex((item) => item.key === phase || (phase === "blocked" && item.key === "test"))
-  return phases.map((item, index) => ({
+  const visiblePhases = !runKind || runKind === "full"
+    ? phases
+    : runKind === "review-heavy"
+      ? phases.filter((item) => item.key === "review" || item.key === "done")
+      : runKind === "test-heavy" || runKind === "verify"
+        ? phases.filter((item) => item.key === "test" || item.key === "done")
+        : phases.filter((item) => item.key === "develop" || item.key === "done")
+  const currentIndex = visiblePhases.findIndex((item) => item.key === phase || (phase === "blocked" && item.key === "test"))
+  return visiblePhases.map((item, index) => ({
     title: item.title,
-    completed: phase === "done"
+    completed: args.phase === "done"
       ? true
       : currentIndex === -1
         ? false
@@ -171,7 +208,7 @@ function buildWorkflowTodos(phase: Phase, status: WorkflowStatus): Array<{ title
   }))
     .map((item) => ({
       ...item,
-      completed: status === "completed" && item.title === "Workflow / Done" ? true : item.completed,
+      completed: status === "completed" && item.title === `${titlePrefix} / Done` ? true : item.completed,
     }))
 }
 
@@ -189,12 +226,19 @@ async function syncHostTodos(args: {
   const workflow = await readJsonFile<{ phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string }>(
     workspace.workflowStateFile(args.workflowId),
   )
+  const runtime = await readJsonFile<{ runKind?: "full" | "review-heavy" | "test-heavy" | "develop" | "verify" | null }>(
+    workspace.workflowRuntimeStateFile(args.workflowId),
+  )
 
   if (!workflow?.activeSessionId || !workflow.phase || !workflow.status) {
     return
   }
 
-  const desired = buildWorkflowTodos(workflow.phase, workflow.status)
+  const desired = buildWorkflowTodos({
+    phase: workflow.phase,
+    status: workflow.status,
+    runKind: runtime?.runKind ?? "full",
+  })
   const existingResponse = await todoClient.list({ path: { id: workflow.activeSessionId } }) as { data?: HostTodoItem[] }
   const existing = existingResponse.data ?? []
 
@@ -205,7 +249,7 @@ async function syncHostTodos(args: {
         path: { id: workflow.activeSessionId },
         body: {
           title: todo.title,
-          content: `workflowId=${workflow.workflowId}; phase=${workflow.phase}; status=${workflow.status}`,
+          content: `workflowId=${workflow.workflowId}; phase=${workflow.phase}; status=${workflow.status}; runKind=${runtime?.runKind ?? "full"}`,
         },
       })
       continue
@@ -216,7 +260,7 @@ async function syncHostTodos(args: {
         path: { id: workflow.activeSessionId, todoId: current.id },
         body: {
           completed: todo.completed,
-          content: `workflowId=${workflow.workflowId}; phase=${workflow.phase}; status=${workflow.status}`,
+          content: `workflowId=${workflow.workflowId}; phase=${workflow.phase}; status=${workflow.status}; runKind=${runtime?.runKind ?? "full"}`,
         },
       })
     }
@@ -289,10 +333,10 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
     })
     await syncHostTodos({
       baseDir,
-      workflowId,
+      workflowId: result.workflowId ?? workflowId,
       ...(input.client ? { client: input.client } : {}),
     })
-    return result
+    return result.text
   }
 
   console.log(`[autopilot] ${loadMessage}`)
@@ -320,13 +364,13 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
       cfg.agent[primaryAgent.name] = {
         mode: primaryAgent.mode,
         description: primaryAgent.description,
-        model: primaryAgent.model,
         prompt: WORKFLOW_PRIMARY_AGENT_PROMPT,
         tools: primaryAgent.tools,
+        ...(primaryAgent.model ? { model: primaryAgent.model } : {}),
       }
-      for (const [commandName, commandConfig] of Object.entries(AUTOPILOT_HOST_COMMANDS)) {
-        cfg.command[commandName] = commandConfig
-      }
+       for (const [commandName, commandConfig] of Object.entries({ ...AUTOPILOT_HOST_COMMANDS, ...AUTOPILOT_NODE_COMMANDS })) {
+         cfg.command[commandName] = commandConfig
+       }
     },
     healthcheck: async () => ({
       ok: true,

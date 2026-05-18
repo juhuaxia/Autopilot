@@ -3,15 +3,36 @@ import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runt
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
 const divider = "=".repeat(64)
-const phaseOrder = ["spec_refinement", "plan", "develop", "review", "test", "done"] as const
+const fullPhaseOrder = ["spec_refinement", "plan", "develop", "review", "test", "done"] as const
+const reviewHeavyPhaseOrder = ["review", "done"] as const
+const testHeavyPhaseOrder = ["test", "done"] as const
+const developPhaseOrder = ["develop", "done"] as const
+const verifyPhaseOrder = ["test", "done"] as const
+type ProgressPhase = typeof fullPhaseOrder[number]
 
-function renderProgressTodos(workflow: WorkflowState): string[] {
-  const currentIndex = phaseOrder.indexOf(workflow.phase as typeof phaseOrder[number])
+function describeRunKind(runtime: WorkflowRuntimeState | null): string {
+  if (!runtime?.runKind || runtime.runKind === "full") {
+    return "full workflow"
+  }
+  return `node run (${runtime.runKind})`
+}
+
+function renderProgressTodos(workflow: WorkflowState, runtime: WorkflowRuntimeState | null): string[] {
+  const phaseOrder: readonly ProgressPhase[] = runtime?.runKind === "review-heavy"
+    ? reviewHeavyPhaseOrder
+    : runtime?.runKind === "test-heavy"
+      ? testHeavyPhaseOrder
+      : runtime?.runKind === "develop"
+        ? developPhaseOrder
+        : runtime?.runKind === "verify"
+          ? verifyPhaseOrder
+        : fullPhaseOrder
+  const currentIndex = phaseOrder.indexOf(workflow.phase as ProgressPhase)
   if (currentIndex === -1) {
     return []
   }
 
-  const labelByPhase: Record<typeof phaseOrder[number], string> = {
+  const labelByPhase: Record<ProgressPhase, string> = {
     spec_refinement: "Refinement",
     plan: "Plan",
     develop: "Develop",
@@ -146,6 +167,16 @@ export function renderHumanActionBlock(args: {
   if (runtime?.presetMode) {
     lines.push(`Preset mode: ${runtime.presetMode}`)
   }
+  if (runtime?.runKind) {
+    lines.push(`Run kind: ${runtime.runKind}`)
+  }
+  lines.push(`Workflow kind: ${describeRunKind(runtime)}`)
+  if (runtime?.parentWorkflowId) {
+    lines.push(`Parent workflow: ${runtime.parentWorkflowId}`)
+  }
+  if (runtime?.sourceWorkflowId && runtime.sourceWorkflowId !== runtime.parentWorkflowId) {
+    lines.push(`Source workflow: ${runtime.sourceWorkflowId}`)
+  }
   if ((runtime?.skippedPhases?.length ?? 0) > 0) {
     lines.push(`Skipped phases: ${runtime?.skippedPhases?.join(", ")}`)
   }
@@ -163,7 +194,7 @@ export function renderHumanActionBlock(args: {
     return lines.join("\n")
   }
 
-  const progressTodos = renderProgressTodos(workflow)
+  const progressTodos = renderProgressTodos(workflow, runtime)
   if (progressTodos.length > 0) {
     lines.push("")
     lines.push("Progress:")

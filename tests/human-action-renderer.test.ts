@@ -52,6 +52,7 @@ describe("human action renderer", () => {
     const output = renderHumanActionBlock({ workflow, runtime, humanAction })
 
     expect(output).toContain("Workflow: wf-render")
+    expect(output).toContain("Workflow kind: full workflow")
     expect(output).toContain("Progress:")
     expect(output).toContain("[~] Refinement")
     expect(output).toContain("Human action: Answer Required")
@@ -92,6 +93,43 @@ describe("human action renderer", () => {
     expect(output).toContain("Phase: develop")
     expect(output).toContain("[x] Plan")
     expect(output).toContain("[~] Develop")
+  })
+
+  it("renders node run workflow kind and compact progress", () => {
+    const workflow: WorkflowState = {
+      workflowId: "wf-review-node",
+      phase: "review",
+      status: "in_progress",
+      approved: true,
+      iteration: 0,
+      maxIterations: 3,
+      blockReason: null,
+      activeSessionId: "session-review",
+      phaseEnteredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    const runtime: WorkflowRuntimeState = {
+      workflowId: workflow.workflowId,
+      recoveryState: "idle",
+      waitingHumanActionId: null,
+      consecutiveFailures: 0,
+      runKind: "review-heavy",
+      parentWorkflowId: "root-wf",
+      sourceWorkflowId: "root-wf",
+    }
+
+    const output = renderHumanActionBlock({
+      workflow,
+      runtime,
+      humanAction: null,
+    })
+
+    expect(output).toContain("Run kind: review-heavy")
+    expect(output).toContain("Workflow kind: node run (review-heavy)")
+    expect(output).toContain("Parent workflow: root-wf")
+    expect(output).toContain("[~] Review")
+    expect(output).toContain("[ ] Done")
+    expect(output).not.toContain("[ ] Test")
   })
 
   it("renders approval and resume recommendations", () => {

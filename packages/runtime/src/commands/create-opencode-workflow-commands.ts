@@ -4,7 +4,7 @@ import type { WorkflowChannelCommand } from "./workflow-command-runner"
 export interface WorkflowPluginCommandDefinition {
   name: WorkflowChannelCommand
   description: string
-  execute(args: { workflowId: string; payload?: string; foregroundSessionId?: string }): Promise<string>
+  execute(args: { workflowId: string; payload?: string; foregroundSessionId?: string }): Promise<{ text: string; workflowId?: string }>
 }
 
 const COMMAND_DESCRIPTIONS: Record<WorkflowChannelCommand, string> = {
@@ -24,14 +24,14 @@ export function createOpencodeWorkflowCommands(
   return (Object.keys(COMMAND_DESCRIPTIONS) as WorkflowChannelCommand[]).map((name) => ({
     name,
     description: COMMAND_DESCRIPTIONS[name],
-    async execute(args: { workflowId: string; payload?: string; foregroundSessionId?: string }): Promise<string> {
+    async execute(args: { workflowId: string; payload?: string; foregroundSessionId?: string }): Promise<{ text: string; workflowId?: string }> {
       const response = await adapter.execute({
         command: name,
         workflowId: args.workflowId,
         ...(args.payload !== undefined ? { payload: args.payload } : {}),
         ...(args.foregroundSessionId ? { foregroundSessionId: args.foregroundSessionId } : {}),
       })
-      return response.text
+      return response
     },
   }))
 }

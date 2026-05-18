@@ -183,6 +183,33 @@ describe("workflow plugin tool export", () => {
     expect(updated.length).toBe(0)
   })
 
+  it("syncs node run todos with node-specific titles", async () => {
+    const created: string[] = []
+    const plugin = await workflowPlugin({
+      directory: "/tmp/workflow-plugin-node-todo",
+      client: {
+        session: {
+          create: async () => ({ id: "session-node-1" }),
+          prompt: async () => ({}),
+          abort: async () => ({}),
+          status: async () => ({ type: "idle" }),
+          todo: {
+            list: async () => ({ data: [] }),
+            create: async ({ body }: { path: { id: string }; body: { title: string } }) => {
+              created.push(body.title)
+              return true
+            },
+            update: async () => true,
+          },
+        },
+      } satisfies PluginSdkClient,
+    })
+
+    await plugin.tool.workflow_open.execute({ workflowId: "wf-node-todo", payload: "请执行 review-heavy 节点任务。" })
+
+    expect(created.some((title) => title.startsWith("Review Run /"))).toBe(false)
+  })
+
   it("prefers host SDK client for workflow execution when available", async () => {
     const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-sdk-session-"))
     let usedPrompt = false

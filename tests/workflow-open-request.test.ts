@@ -306,6 +306,26 @@ describe("workflow open request", () => {
     }
   })
 
+  it("extracts /ap-doc from structured prompt directives", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-structured-doc-directive-"))
+    try {
+      await writeFile(join(workspaceRoot, "xxxxx.md"), "# Requirement\n\nSmall change.")
+      const result = await buildWorkflowOpenRequest(
+        JSON.stringify({
+          prompt: "/ap-doc: xxxxx.md\n/ap-mode: safe\n请按文档开发",
+        }),
+        workspaceRoot,
+      )
+
+      expect(result.mode).toBe("safe")
+      expect(result.docPaths).toEqual(["xxxxx.md"])
+      expect(result.prompt).toContain("请按文档开发")
+      expect(result.prompt).not.toContain("/ap-doc: xxxxx.md")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
   it("parses /ap-mode: debug as a debug preset", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-debug-"))
     try {
@@ -314,6 +334,18 @@ describe("workflow open request", () => {
       expect(result.mode).toBe("debug")
       expect(result.prompt).toContain("请修复一个偶发报错。")
       expect(result.userRequest).toContain("mode=debug")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("includes non-existent resource red line in workflow input", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-red-line-"))
+    try {
+      const result = await buildWorkflowOpenRequest("请修复一个页面问题。", workspaceRoot)
+
+      expect(result.userRequest).toContain("[NON_EXISTENT_RESOURCE_RED_LINE]")
+      expect(result.userRequest).toContain("Do not introduce, import, reference, call, or assume any file")
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true })
     }
@@ -385,6 +417,39 @@ describe("workflow open request", () => {
       expect(result.needsClarification).toBe(true)
       expect(result.clarificationQuestion).toContain("还没有实际需求内容")
       expect(result.clarificationOptions?.[0]).toContain("/ap-light")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("asks for actual task content when ap-node-run contains only directives", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-empty-ap-node-run-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        [
+          "请启动 Autopilot workflow，并按下面的请求执行。",
+          "/ap-node-run: develop",
+        ].join("\n"),
+        workspaceRoot,
+      )
+
+      expect(result.needsClarification).toBe(true)
+      expect(result.clarificationQuestion).toContain("还没有实际需求内容")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("parses inline ap-node-run directive on the same line as bridge text", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-inline-ap-node-run-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        "请启动 Autopilot workflow，并按下面的请求执行。/ap-node-run: develop",
+        workspaceRoot,
+      )
+
+      expect(result.runKind).toBe("develop")
+      expect(result.needsClarification).toBe(false)
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true })
     }

@@ -826,7 +826,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
   async ensureDefaultForStartAt(
     workflowId: string,
     userRequest: string | undefined,
-    startAt: "spec_refinement" | "develop",
+    startAt: "spec_refinement" | "develop" | "review" | "test",
   ): Promise<void> {
     const existing = await readJsonFile<ArtifactStateFile>(this.workspace.artifactStateFile(workflowId))
     if (existing) {
@@ -851,22 +851,22 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
 
     const defaults: ArtifactStateFile = {
       spec_refinement: {
-        valid: false,
-        readyForNextPhase: false,
-        summary: "Need clarification before planning",
-        questions: refinementQuestions,
+        valid: startAt === "review" || startAt === "test",
+        readyForNextPhase: startAt === "review" || startAt === "test",
+        summary: startAt === "review" || startAt === "test" ? "Audit source context prepared" : "Need clarification before planning",
+        questions: startAt === "review" || startAt === "test" ? [] : refinementQuestions,
         initialRequest: normalizedUserRequest,
       },
       plan: {
         valid: true,
-        readyForNextPhase: false,
-        requiresApproval: true,
-        summary: "Plan drafted and awaiting approval",
+        readyForNextPhase: startAt === "review" || startAt === "test",
+        requiresApproval: startAt !== "review" && startAt !== "test",
+        summary: startAt === "review" || startAt === "test" ? "Audit source plan context prepared" : "Plan drafted and awaiting approval",
       },
       develop: {
-        valid: false,
-        readyForNextPhase: false,
-        summary: "Development work is not complete yet",
+        valid: startAt === "review" || startAt === "test",
+        readyForNextPhase: startAt === "review" || startAt === "test",
+        summary: startAt === "review" || startAt === "test" ? "Audit source develop context prepared" : "Development work is not complete yet",
       },
       review: {
         valid: true,

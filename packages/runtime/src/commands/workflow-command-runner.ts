@@ -15,6 +15,7 @@ export interface WorkflowCommandResult {
   ok: boolean
   output: string
   events: WorkflowEventRecord[]
+  workflowId?: string
 }
 
 type Harness = Awaited<ReturnType<typeof createHarness>>

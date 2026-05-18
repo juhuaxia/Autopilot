@@ -21,7 +21,7 @@ describe("opencode plugin command adapter", () => {
     expect(open).toBeDefined()
     const output = await open!.execute({ workflowId: "wf-plugin", payload: "新增插件适配器打开工作流验证。" })
 
-    expect(output).toContain("Workflow: wf-plugin")
+    expect(output.text).toContain("Workflow: wf-plugin")
 
     await rm(baseDir, { recursive: true, force: true })
   })

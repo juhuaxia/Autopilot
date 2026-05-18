@@ -10,6 +10,7 @@ export interface WorkflowPluginCommandRequest {
 export interface WorkflowPluginCommandResponse {
   ok: boolean
   text: string
+  workflowId?: string
 }
 
 export interface WorkflowPluginCommandAdapter {
@@ -35,6 +36,7 @@ export class DefaultWorkflowPluginCommandAdapter implements WorkflowPluginComman
     return {
       ok: result.ok,
       text: result.output,
+      ...(result.workflowId ? { workflowId: result.workflowId } : {}),
     }
   }
 }

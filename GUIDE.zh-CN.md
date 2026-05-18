@@ -90,6 +90,9 @@ Autopilot 支持少量私有 inline directives，可以直接写在正常聊天�
 
 ```text
 /ap-doc: docs/requirement.md
+/ap-mode: light
+/ap-mode: standard
+/ap-mode: safe
 /ap-start-at: develop
 ```
 
@@ -109,10 +112,51 @@ Autopilot 支持少量私有 inline directives，可以直接写在正常聊天�
 规则：
 
 - `/ap-doc:` 会把文档作为显式 workflow 参考文档加入 workflow-open 输入。
+- `/ap-mode:` 记录 workflow 预设模式，使聊天输入与公开 slash 命令的语义保持一致。
 - `/ap-start-at: develop` 会显式跳过需求精炼和制定计划，直接从 `develop` 开始新 workflow。
-- 这两个指令需要单独占一行。
+- 这些指令需要单独占一行。
 - 普通正文里的 `startAt: develop` 只会被当成普通文本，**不会**被解释成控制指令。
 - direct-develop workflow 仍然保留 review/test 的质量护栏，并会在状态中记录 refinement/plan 被跳过。
+
+## 公开 slash 命令
+
+Autopilot 同时注册了可被 OpenCode 发现的 slash 命令，输入 `/a` 时可以自动补全。
+
+可用命令：
+
+- `/ap-light`：完整工作流模式；路由到 `workflow` agent，展开为 `light` 预设并直接从 develop 开始
+- `/ap-standard`：完整工作流模式；路由到 `workflow` agent，展开为 `standard` 预设
+- `/ap-safe`：完整工作流模式；路由到 `workflow` agent，展开为 `safe` 预设
+- `/ap-debug`：完整工作流模式；路由到 `workflow` agent，展开为 `debug` 预设
+- `/ap-review-heavy`：节点评审模式；在已完成的工作流上下文中创建 review 节点运行，否则展开为 `review-heavy` 预设
+- `/ap-test-heavy`：节点测试模式；在已有工作流上下文中创建 test 节点运行
+- `/ap-develop`：节点开发模式；在已有工作流上下文中创建 develop 节点运行
+- `/ap-verify`：节点验证模式；在已有工作流上下文中创建 verify 节点运行
+
+这些命令是薄入口。它们在 OpenCode 中自动补全、运行在 `workflow` agent 上，并展开为 Autopilot 指令行供工作流运行时可靠解析。
+
+当前预设 / 节点行为：
+
+- `light`：direct-develop 路径，适用于小而明确的任务
+- `standard`：默认阶段顺序，review/test 指导适中
+- `safe`：默认阶段顺序，review/test 指导更严格，理解更深入
+- `debug`：默认阶段顺序，包含复现/隔离/修复/验证指导，适用于 bug 修复
+- `review-heavy`：默认阶段顺序，额外关注评审和回归发现
+- `verify`：默认阶段顺序，以验证优先，评审更精简
+- `review-heavy` 节点运行：`review -> done`
+- `test-heavy` 节点运行：`test -> done`
+- `develop` 节点运行：`develop -> done`
+- `verify` 节点运行：`test -> done`
+
+节点运行元数据：
+
+- `runKind`：`full`、`review-heavy`、`test-heavy`、`develop` 或 `verify`
+- `parentWorkflowId`：直接父工作流/运行
+- `sourceWorkflowId`：提供 artifacts 的原始根工作流
+
+节点运行用于在已完成的工作流基础上做后续评审、测试、开发或验证工作。它们复用源工作流的 artifacts 作为上下文，但不会覆盖原工作流的历史记录。
+
+详见 `docs/ap-command-presets.md` 了解预设设计，`docs/review-orchestration-overview.md` 了解端到端评审编排与整合流程。
 
 ## 工作流恢复
 

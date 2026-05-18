@@ -306,6 +306,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "pass") {
+        if (runtime.runKind === "review-heavy") {
+          return {
+            type: "advance_phase",
+            nextPhase: "done",
+            reason: "Review-heavy node run passed",
+          }
+        }
         return {
           type: "advance_phase",
           nextPhase: "test",
@@ -314,6 +321,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
+        if (runtime.runKind === "review-heavy") {
+          return {
+            type: "advance_phase",
+            nextPhase: "done",
+            reason: "Review-heavy node run failed and produced a report",
+          }
+        }
         if (artifact.hasBlockingSeverity) {
       if (workflow.iteration + 1 >= workflow.maxIterations) {
         return {
@@ -405,6 +419,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
+        if (runtime.runKind === "test-heavy") {
+          return {
+            type: "advance_phase",
+            nextPhase: "done",
+            reason: "Test-heavy node run failed and produced a report",
+          }
+        }
         const diagnostic = buildReportFailureBlockedDiagnostic(input, "test")
         return buildBlockedAction({
           workflowId: workflow.workflowId,
@@ -436,6 +457,13 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "develop") {
+      if (runtime.runKind === "develop" && artifact.readyForNextPhase) {
+        return {
+          type: "advance_phase",
+          nextPhase: "done",
+          reason: "Develop node run completed",
+        }
+      }
       if (workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const repeatedSignalEscalation = shouldEscalateRepeatedArtifactSignals(input, "develop")
         if (repeatedSignalEscalation) {

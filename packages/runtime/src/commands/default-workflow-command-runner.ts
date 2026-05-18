@@ -17,9 +17,189 @@ import { readJsonFile } from "../shared/json-file"
 import type { ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
+const ARCHIVE_KEEP_COUNT = 3
+
 function assertWorkflowId(workflowId: string): void {
   if (!workflowId.trim()) {
     throw new Error("workflowId is required for workflow commands")
+  }
+}
+
+function resolvePresetWorkflowTargetId(requestedWorkflowId: string): string {
+  const timestamp = Date.now().toString(36)
+  const suffix = `-${timestamp}`
+  if (requestedWorkflowId.endsWith(suffix)) {
+    return requestedWorkflowId
+  }
+  return `${requestedWorkflowId}${suffix}`
+}
+
+function resolveNodeRunWorkflowTargetId(sourceWorkflowId: string, runKind: string): string {
+  const timestamp = Date.now().toString(36)
+  return `${sourceWorkflowId}-${runKind}-${timestamp}`
+}
+
+function isActiveWorkflow(workflow: WorkflowState): boolean {
+  return workflow.phase !== "done" && workflow.status !== "completed" && workflow.status !== "blocked"
+}
+
+function getMostRecentActiveWorkflow(workflows: WorkflowState[]): WorkflowState | null {
+  return workflows
+    .filter(isActiveWorkflow)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null
+}
+
+async function findCompletedWorkflow(
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>,
+  workflowId: string,
+): Promise<WorkflowState | null> {
+  const direct = await harness.stateStore.getWorkflow(workflowId)
+  if (direct && (direct.phase === "done" || direct.status === "completed")) {
+    return direct
+  }
+  return null
+}
+
+async function resolveNodeChainContext(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  workflowId: string
+}): Promise<{
+  parentWorkflowId: string
+  sourceWorkflowId: string
+  currentWorkflow: WorkflowState | null
+}> {
+  const currentWorkflow = await args.harness.stateStore.getWorkflow(args.workflowId)
+  const currentRuntime = await args.harness.stateStore.getRuntime(args.workflowId)
+  const sourceWorkflowId = currentRuntime?.sourceWorkflowId ?? currentRuntime?.parentWorkflowId ?? currentWorkflow?.workflowId ?? args.workflowId
+  const parentWorkflowId = currentWorkflow?.workflowId ?? args.workflowId
+  return { parentWorkflowId, sourceWorkflowId, currentWorkflow }
+}
+
+async function buildReviewHeavyNodeRunRequest(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  sourceWorkflowId: string
+  prompt: string
+}): Promise<string> {
+  const phases = ["spec_refinement", "plan", "develop", "review", "test"] as const
+  const lines = [
+    "请基于指定已完成 workflow 的历史 artifacts，对当前代码执行一次独立的 review-heavy 重审。",
+    "不要把历史 artifacts 当作通过凭证；它们只用于理解原需求、计划、实现范围、历史风险和测试记录。",
+    "本次结论必须基于当前代码、当前仓库状态和客观审查结果重新判断。",
+    "不要修改应用代码；只更新本次 review artifact。",
+    "",
+    `[SOURCE_WORKFLOW_ID] ${args.sourceWorkflowId}`,
+  ]
+  if (args.prompt.trim()) {
+    lines.push("", "[USER_REQUEST]", args.prompt.trim())
+  }
+  for (const phase of phases) {
+    const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
+    if (content.trim()) {
+      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+    }
+  }
+  return lines.join("\n")
+}
+
+async function buildChainedDevelopRequest(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  sourceWorkflowId: string
+  chainWorkflowId: string
+  prompt: string
+}): Promise<string> {
+  const sourcePhases = ["spec_refinement", "plan", "develop", "review", "test"] as const
+  const chainPhases = ["review", "test"] as const
+  const lines = [
+    "请基于当前节点链路中的审查/测试结果，执行一次 develop 修复/开发。",
+    "本次开发必须优先吸收上一节点 run 的 findings、失败项和风险判断，而不是只看最初根 workflow。",
+    "本次需要修改代码并输出标准 develop artifact。",
+    "",
+    `[SOURCE_WORKFLOW_ID] ${args.sourceWorkflowId}`,
+    `[CHAIN_WORKFLOW_ID] ${args.chainWorkflowId}`,
+  ]
+  if (args.prompt.trim()) {
+    lines.push("", "[USER_REQUEST]", args.prompt.trim())
+  }
+  for (const phase of sourcePhases) {
+    const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
+    if (content.trim()) {
+      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+    }
+  }
+  for (const phase of chainPhases) {
+    const content = await readFile(args.harness.workspace.phaseArtifactFile(args.chainWorkflowId, phase), "utf8").catch(() => "")
+    if (content.trim()) {
+      lines.push("", `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+    }
+  }
+  return lines.join("\n")
+}
+
+async function buildNodeRunRequest(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  sourceWorkflowId: string
+  prompt: string
+  runKind: "test-heavy" | "develop" | "verify"
+  chainWorkflowId?: string
+}): Promise<string> {
+  const phases = ["spec_refinement", "plan", "develop", "review", "test"] as const
+  const intro = args.runKind === "test-heavy"
+    ? "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 test-heavy 验证。"
+    : args.runKind === "develop"
+      ? "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 develop 修复/开发。"
+      : "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 verify 验证。"
+  const artifactRule = args.runKind === "test-heavy"
+    ? "不要修改应用代码；只更新本次 test artifact。"
+    : args.runKind === "develop"
+      ? "本次需要修改代码并输出标准 develop artifact。"
+      : "不要修改应用代码；只更新本次 verify artifact。"
+  const lines = [
+    intro,
+    "不要把历史 artifacts 当作通过凭证；它们只用于理解原需求、计划、实现范围、历史风险和测试记录。",
+    artifactRule,
+    "",
+    `[SOURCE_WORKFLOW_ID] ${args.sourceWorkflowId}`,
+  ]
+  if (args.prompt.trim()) {
+    lines.push("", "[USER_REQUEST]", args.prompt.trim())
+  }
+  for (const phase of phases) {
+    const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
+    if (content.trim()) {
+      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+    }
+  }
+  if (args.chainWorkflowId) {
+    for (const phase of ["review", "test"] as const) {
+      const content = await readFile(args.harness.workspace.phaseArtifactFile(args.chainWorkflowId, phase), "utf8").catch(() => "")
+      if (content.trim()) {
+        lines.push("", `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+      }
+    }
+  }
+  return lines.join("\n")
+}
+
+async function archiveCompletedWorkflows(harness: {
+  stateStore: { listWorkflows?(): Promise<WorkflowState[]> }
+  workspace: { workflowDir(workflowId: string): string }
+}, keepCount: number): Promise<void> {
+  const workflows = await harness.stateStore.listWorkflows?.() ?? []
+  const completedWorkflows = workflows
+    .filter((wf) => wf.status === "completed" || (wf.status === "blocked" && wf.blockReason === "archived-by-user"))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+
+  if (completedWorkflows.length <= keepCount) {
+    return
+  }
+
+  const toRemove = completedWorkflows.slice(keepCount)
+  for (const wf of toRemove) {
+    try {
+      await rm(harness.workspace.workflowDir(wf.workflowId), { recursive: true, force: true })
+    } catch {
+      // best-effort cleanup
+    }
   }
 }
 
@@ -261,25 +441,29 @@ type PendingClarification = {
   rawPayload: string
   prompt: string
   options: string[]
+  sourceWorkflowId?: string
+  mode?: string
 }
 
 async function buildWorkflowStatusResult(args: {
   harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
   workflowId: string
+  clarificationWorkflowId?: string
   prefixOutput?: string
 }): Promise<WorkflowCommandResult> {
-  const { harness, workflowId, prefixOutput } = args
+  const { harness, workflowId, clarificationWorkflowId, prefixOutput } = args
   const workflow = await harness.stateStore.getWorkflow(workflowId)
   const runtime = await harness.stateStore.getRuntime(workflowId)
   const humanAction = await harness.humanActionStore.getCurrent(workflowId)
   const events = await harness.eventStore.list(workflowId)
-  const clarification = await readPendingClarification(harness, workflowId)
+  const clarification = await readPendingClarification(harness, clarificationWorkflowId ?? workflowId)
   if (!workflow) {
     if (clarification) {
       return {
         ok: true,
         output: [clarification.prompt, ...clarification.options].join("\n"),
         events: [],
+        workflowId,
       }
     }
     throw new Error(`Workflow not found: ${workflowId}`)
@@ -308,6 +492,7 @@ async function buildWorkflowStatusResult(args: {
       ? [prefixOutput, "", statusBlock].join("\n")
       : statusBlock,
     events,
+    workflowId,
   }
 }
 
@@ -331,6 +516,7 @@ async function renderClarificationIfAny(
       ...pending.options,
     ].join("\n"),
     events: [],
+    workflowId,
   }
 }
 
@@ -417,6 +603,8 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           rawPayload: payload ?? "",
           prompt: openRequest.clarificationQuestion ?? "我需要先确认你的意图。",
           options: openRequest.clarificationOptions ?? [],
+          sourceWorkflowId: workflowId,
+          ...(openRequest.mode ? { mode: openRequest.mode } : {}),
         })
         const outputLines = [openRequest.clarificationQuestion ?? "我需要先确认你的意图。"]
         if (openRequest.clarificationOptions && openRequest.clarificationOptions.length > 0) {
@@ -426,11 +614,130 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           ok: true,
           output: outputLines.join("\n"),
           events: [],
+          workflowId,
         }
       }
 
       const workflows = await harness.stateStore.listWorkflows?.() ?? []
-      const activeWorkflows = workflows.filter((wf) => wf.status !== "completed" && wf.status !== "blocked")
+      const activeWorkflows = workflows.filter(isActiveWorkflow)
+
+      const currentWorkflow = await harness.stateStore.getWorkflow(workflowId)
+      const currentRuntime = await harness.stateStore.getRuntime(workflowId)
+      const currentArtifact = currentWorkflow ? await harness.artifactEvaluator.evaluate(currentWorkflow) : null
+
+      const shouldChainDevelopFromFailedNode = openRequest.runKind === "develop"
+        && !!currentWorkflow
+        && !!currentRuntime?.runKind
+        && currentRuntime.runKind !== "full"
+        && (currentWorkflow.phase === "review" || currentWorkflow.phase === "test")
+        && currentArtifact?.reportStatus === "fail"
+
+      if (shouldChainDevelopFromFailedNode && currentRuntime) {
+        const sourceWorkflowId = currentRuntime.sourceWorkflowId ?? currentRuntime.parentWorkflowId ?? workflowId
+        const parentWorkflowId = workflowId
+        const targetId = resolveNodeRunWorkflowTargetId(parentWorkflowId, "develop")
+        const nodeRequest = await buildChainedDevelopRequest({
+          harness,
+          sourceWorkflowId,
+          chainWorkflowId: workflowId,
+          prompt: openRequest.prompt,
+        })
+        await initializeWorkflow({
+          workflowId: targetId,
+          stateStore: harness.stateStore,
+          artifactEvaluator: harness.artifactEvaluator,
+          userRequest: nodeRequest,
+          startAt: "develop",
+          runKind: "develop",
+          parentWorkflowId,
+          sourceWorkflowId,
+        })
+        if (foregroundSessionId) {
+          await harness.stateStore.updateRuntime(targetId, {
+            preferredForegroundSessionId: foregroundSessionId,
+          })
+        }
+        await harness.attachService.attach(targetId)
+        return buildWorkflowStatusResult({
+          harness,
+          workflowId: targetId,
+          prefixOutput: `已基于 workflow ${parentWorkflowId} 创建 develop 节点任务。`,
+        })
+      }
+
+      const chainedNodeContext = openRequest.runKind === "develop" || openRequest.runKind === "verify" || openRequest.runKind === "test-heavy"
+        ? await resolveNodeChainContext({ harness, workflowId })
+        : null
+      const completedRequestedWorkflow = (openRequest.mode === "review-heavy" || openRequest.runKind === "test-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify")
+        ? await findCompletedWorkflow(harness, chainedNodeContext?.sourceWorkflowId ?? workflowId)
+        : null
+      if (completedRequestedWorkflow) {
+        const requestedNodeRunKind: "review-heavy" | "test-heavy" | "develop" | "verify" | undefined = openRequest.mode === "review-heavy"
+          ? "review-heavy"
+          : openRequest.runKind === "test-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify"
+            ? openRequest.runKind
+            : undefined
+        if (!requestedNodeRunKind) {
+          throw new Error("Node run request missing run kind")
+        }
+        const sourceWorkflowId = chainedNodeContext?.sourceWorkflowId ?? completedRequestedWorkflow.workflowId
+        const parentWorkflowId = requestedNodeRunKind === "develop" || requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+          ? (chainedNodeContext?.parentWorkflowId ?? completedRequestedWorkflow.workflowId)
+          : completedRequestedWorkflow.workflowId
+        const targetId = resolveNodeRunWorkflowTargetId(parentWorkflowId, requestedNodeRunKind)
+        const nodeRequest = requestedNodeRunKind === "review-heavy"
+          ? await buildReviewHeavyNodeRunRequest({
+              harness,
+              sourceWorkflowId,
+              prompt: openRequest.prompt,
+            })
+          : requestedNodeRunKind === "develop" && chainedNodeContext
+            ? await buildChainedDevelopRequest({
+                harness,
+                sourceWorkflowId,
+                chainWorkflowId: workflowId,
+                prompt: openRequest.prompt,
+              })
+          : await buildNodeRunRequest({
+              harness,
+              sourceWorkflowId,
+              prompt: openRequest.prompt,
+              runKind: requestedNodeRunKind,
+              ...(chainedNodeContext ? { chainWorkflowId: workflowId } : {}),
+            })
+        const startAt = requestedNodeRunKind === "develop"
+          ? "develop"
+          : requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+            ? "test"
+            : "review"
+        const presetMode = requestedNodeRunKind === "review-heavy"
+          ? "review-heavy"
+          : requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+            ? "verify"
+            : null
+        await initializeWorkflow({
+          workflowId: targetId,
+          stateStore: harness.stateStore,
+          artifactEvaluator: harness.artifactEvaluator,
+          userRequest: nodeRequest,
+          startAt,
+          ...(presetMode ? { presetMode } : {}),
+          runKind: requestedNodeRunKind,
+          parentWorkflowId,
+          sourceWorkflowId,
+        })
+        if (foregroundSessionId) {
+          await harness.stateStore.updateRuntime(targetId, {
+            preferredForegroundSessionId: foregroundSessionId,
+          })
+        }
+        await harness.attachService.attach(targetId)
+        return buildWorkflowStatusResult({
+          harness,
+          workflowId: targetId,
+          prefixOutput: `已基于 workflow ${parentWorkflowId} 创建 ${requestedNodeRunKind} 节点任务。`,
+        })
+      }
 
       let pendingHumanActionWorkflowId: string | undefined
       for (const wf of activeWorkflows) {
@@ -454,7 +761,22 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       }
 
       const routingDecision: WorkflowRoutingDecision = openRequest.mode
-        ? { action: "new", reason: `preset-requested:${openRequest.mode}` }
+        ? (() => {
+            const mostRecentActive = getMostRecentActiveWorkflow(workflows)
+            if (mostRecentActive) {
+              // Active workflow exists — ask user to choose
+              return {
+                action: "confirm" as const,
+                reason: `preset-requested-but-active-workflow-exists:${mostRecentActive.workflowId}`,
+                targetWorkflowId: mostRecentActive.workflowId,
+              }
+            }
+            return {
+              action: "new" as const,
+              reason: `preset-requested:${openRequest.mode}`,
+              targetWorkflowId: resolvePresetWorkflowTargetId(workflowId),
+            }
+          })()
         : classifyWorkflowIntent(routerInput)
 
       const hasAnyWorkflow = activeWorkflows.length > 0 || !!pendingHumanActionWorkflowId
@@ -466,6 +788,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               ok: true,
               output: formatRoutingOutput({ action: "confirm", reason: "continue-requested-but-no-workflow-to-continue" }),
               events: [],
+              workflowId,
             }
           }
           const targetId = routingDecision.targetWorkflowId ?? workflowId
@@ -488,6 +811,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               ok: true,
               output: formatRoutingOutput({ action: "confirm", reason: "fork-requested-but-no-parent-workflow" }),
               events: [],
+              workflowId,
             }
           }
         // fall through to "new" handler
@@ -506,6 +830,8 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               preferredForegroundSessionId: foregroundSessionId,
             })
           }
+          // Cleanup old completed workflows
+          await archiveCompletedWorkflows(harness, ARCHIVE_KEEP_COUNT)
           await harness.attachService.attach(targetId)
           return buildWorkflowStatusResult({
             harness,
@@ -515,10 +841,36 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         }
 
         case "confirm": {
+          if (routingDecision.reason.startsWith("preset-requested-but-active-workflow-exists:")) {
+            const activeId = routingDecision.targetWorkflowId!
+            const activeWf = workflows.find((wf) => wf.workflowId === activeId)
+            const phase = activeWf?.phase ?? "unknown"
+            const status = activeWf?.status ?? "unknown"
+
+            await savePendingClarification(harness, workflowId, {
+              rawPayload: payload ?? "",
+              prompt: `检测到未完成的工作流 ${activeId} (phase: ${phase}, status: ${status})，你想继续还是新开？`,
+              options: ["1. 继续/恢复当前工作流", "2. 新建一个全新的工作流"],
+              sourceWorkflowId: activeId,
+              ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+            })
+
+            return {
+              ok: true,
+              output: [
+                `检测到未完成的工作流 ${activeId} (phase: ${phase}, status: ${status})，你想继续还是新开？`,
+                "1. 继续/恢复当前工作流",
+                "2. 新建一个全新的工作流",
+              ].join("\n"),
+              events: [],
+              workflowId: activeId,
+            }
+          }
           return {
             ok: true,
             output: formatRoutingOutput(routingDecision),
             events: [],
+            workflowId,
           }
         }
       }
@@ -547,7 +899,80 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       }
 
       if (answers) {
-        await harness.humanActionService.answer(workflowId, answers)
+        const lifecycleDecision = answers.lifecycle_decision ?? answers.answer
+        if (lifecycleDecision === "resume" || lifecycleDecision === "1") {
+          // User chose to resume active workflow
+          const pending = await readPendingClarification(harness, workflowId)
+          await clearPendingClarification(harness, workflowId)
+          const sourceWorkflowId = pending?.sourceWorkflowId ?? workflowId
+          if (sourceWorkflowId) {
+            const sourceWorkflow = await harness.stateStore.getWorkflow(sourceWorkflowId)
+            if (sourceWorkflow && isActiveWorkflow(sourceWorkflow)) {
+              if (foregroundSessionId) {
+                await harness.stateStore.updateRuntime(sourceWorkflowId, {
+                  preferredForegroundSessionId: foregroundSessionId,
+                })
+              }
+              await harness.attachService.attach(sourceWorkflowId)
+              return buildWorkflowStatusResult({
+                harness,
+                workflowId: sourceWorkflowId,
+                clarificationWorkflowId: workflowId,
+                prefixOutput: "已继续当前任务。",
+              })
+            }
+          }
+          // Fallback: no active workflow found, treat as normal answer
+          await harness.humanActionService.answer(workflowId, answers)
+        } else if (lifecycleDecision === "new" || lifecycleDecision === "2") {
+          // User chose to start fresh — archive old active workflow and create new
+          const pending = await readPendingClarification(harness, workflowId)
+          await clearPendingClarification(harness, workflowId)
+          const sourceWorkflowId = pending?.sourceWorkflowId ?? workflowId
+          if (sourceWorkflowId) {
+            const sourceWorkflow = await harness.stateStore.getWorkflow(sourceWorkflowId)
+            if (sourceWorkflow && isActiveWorkflow(sourceWorkflow)) {
+              await harness.stateStore.updateWorkflow(sourceWorkflowId, {
+                status: "blocked",
+                blockReason: "archived-by-user",
+              })
+            }
+          }
+          const originalMode = pending?.mode
+          let originalPrompt: string | undefined
+          if (pending?.rawPayload) {
+            try {
+              const parsed = JSON.parse(pending.rawPayload) as { prompt?: string }
+              originalPrompt = parsed.prompt
+            } catch {
+              originalPrompt = undefined
+            }
+          }
+          const targetId = resolvePresetWorkflowTargetId(workflowId)
+          await initializeWorkflow({
+            workflowId: targetId,
+            stateStore: harness.stateStore,
+            artifactEvaluator: harness.artifactEvaluator,
+            userRequest: originalPrompt ?? "",
+            ...(originalMode ? { presetMode: originalMode as any } : {}),
+          })
+          if (foregroundSessionId) {
+            await harness.stateStore.updateRuntime(targetId, {
+              preferredForegroundSessionId: foregroundSessionId,
+            })
+          }
+          // Cleanup old completed and archived workflows
+          await archiveCompletedWorkflows(harness, ARCHIVE_KEEP_COUNT)
+          await harness.attachService.attach(targetId)
+          return buildWorkflowStatusResult({
+            harness,
+            workflowId: targetId,
+            clarificationWorkflowId: workflowId,
+            prefixOutput: "已创建新的独立任务。",
+          })
+        } else {
+          await harness.humanActionService.answer(workflowId, answers)
+        }
       } else {
         const pending = await readPendingClarification(harness, workflowId)
         if (!pending) {
@@ -610,6 +1035,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         ok: true,
         output: `Returned from workflow channel for ${workflowId}. Your workflow continues and can be re-attached later.`,
         events,
+        workflowId,
       }
     }
 

@@ -6,6 +6,7 @@ export type BlockedDecision = "fix" | "accept"
 
 export type WorkflowStartMode = "normal" | "direct-develop"
 export type WorkflowPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify"
+export type WorkflowRunKind = "full" | "review-heavy" | "test-heavy" | "develop" | "verify"
 
 export interface WorkflowRuntimeState {
   workflowId: string
@@ -31,6 +32,9 @@ export interface WorkflowRuntimeState {
     decidedAt: string
   } | null
   presetMode?: WorkflowPresetMode | null
+  runKind?: WorkflowRunKind
+  parentWorkflowId?: string | null
+  sourceWorkflowId?: string | null
   startMode?: WorkflowStartMode
   skippedPhases?: Array<Extract<import("./phase").Phase, "spec_refinement" | "plan">>
   outOfBandEditsDetected?: boolean

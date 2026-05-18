@@ -8,10 +8,13 @@ export async function initializeWorkflow(args: {
   stateStore: WorkflowStateStore
   artifactEvaluator: FileSystemArtifactEvaluator
   userRequest?: string
-  startAt?: "spec_refinement" | "develop"
+  startAt?: "spec_refinement" | "develop" | "review" | "test"
   presetMode?: WorkflowRuntimeState["presetMode"]
+  runKind?: WorkflowRuntimeState["runKind"]
+  parentWorkflowId?: string | null
+  sourceWorkflowId?: string | null
 }): Promise<void> {
-  const { workflowId, stateStore, artifactEvaluator, userRequest, startAt = "spec_refinement", presetMode = null } = args
+  const { workflowId, stateStore, artifactEvaluator, userRequest, startAt = "spec_refinement", presetMode = null, runKind = "full", parentWorkflowId = null, sourceWorkflowId = null } = args
   const existing = await stateStore.getWorkflow(workflowId)
   if (existing) {
     return
@@ -48,6 +51,9 @@ export async function initializeWorkflow(args: {
     testArtifactRepairDispatchPending: false,
     pendingBlockedDecision: null,
     presetMode,
+    runKind,
+    parentWorkflowId,
+    sourceWorkflowId,
     startMode: startAt === "develop" ? "direct-develop" : "normal",
     skippedPhases: startAt === "develop" ? ["spec_refinement", "plan"] : [],
     outOfBandEditsDetected: false,
