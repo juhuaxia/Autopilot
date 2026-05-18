@@ -19,7 +19,15 @@ describe("workflow plugin entry skeleton", () => {
       directory: join(tmpdir(), "workflow-plugin-entry-config"),
     })
     type PluginConfig = Parameters<NonNullable<typeof plugin.config>>[0]
-    const cfg: PluginConfig = {}
+    const cfg: PluginConfig = {
+      command: {
+        "ap-test-heavy": {
+          description: "stale command",
+          template: "/ap-node-run: test-heavy",
+          agent: "workflow",
+        },
+      },
+    }
 
     await plugin.config?.(cfg)
 
@@ -32,5 +40,6 @@ describe("workflow plugin entry skeleton", () => {
     expect(cfg.command?.["ap-review-heavy"]?.template).toContain("/ap-mode: review-heavy")
     expect(cfg.command?.["ap-verify"]?.template).toContain("/ap-node-run: verify")
     expect(cfg.command?.["ap-develop"]?.template).toContain("/ap-node-run: develop")
+    expect(cfg.command?.["ap-test-heavy"]).toBeUndefined()
   })
 })

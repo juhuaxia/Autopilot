@@ -222,6 +222,11 @@ describe("workflow harness MVP", () => {
     expect(storedReviewSession?.lastPrompt).toContain("[PHASE] review")
     expect(storedReviewSession?.lastPrompt).toContain("[SOURCE_DEVELOP_ARTIFACT]")
     expect(storedReviewSession?.lastPrompt).toContain("[REVIEW_POLICY]")
+    expect(storedReviewSession?.lastPrompt).toContain("This phase is read-only for project code")
+    expect(storedReviewSession?.lastPrompt).toContain("do not modify application code")
+    expect(storedReviewSession?.lastPrompt).toContain("do not fix them during review")
+    expect(storedReviewSession?.lastPrompt).toContain("[REVIEW_SECTION_ORDER_POLICY]")
+    expect(storedReviewSession?.lastPrompt).toContain("Do not move ## 结论 above ## Regression 风险评估")
     expect(storedReviewSession?.lastPrompt).toContain("regression risk")
     expect(storedReviewSession?.lastPrompt).toContain("unverified icon/image/asset/component imports")
     expect(storedReviewSession?.lastPrompt).toContain("fabricated resource references")
@@ -246,6 +251,10 @@ describe("workflow harness MVP", () => {
     expect(storedTestSession?.lastPrompt).toContain("[PHASE] test")
     expect(storedTestSession?.lastPrompt).toContain("[SOURCE_REVIEW_ARTIFACT]")
     expect(storedTestSession?.lastPrompt).toContain("[TEST_POLICY]")
+    expect(storedTestSession?.lastPrompt).toContain("This phase is read-only for project code")
+    expect(storedTestSession?.lastPrompt).toContain("do not modify application code")
+    expect(storedTestSession?.lastPrompt).toContain("mark FAIL and record the required fix instead of applying it")
+    expect(storedTestSession?.lastPrompt).toContain("[TEST_SECTION_ORDER_POLICY]")
     expect(storedTestSession?.lastPrompt).toContain("upstream/downstream files")
 
     await harness.artifactEvaluator.setTestReport(workflowId, "pass")
@@ -865,6 +874,93 @@ describe("workflow harness MVP", () => {
     expect(reviewArtifact).toContain("## 状态\nPASS")
     expect(reviewArtifact).toContain("## 结论\nPASS")
     expect(reviewArtifact).toContain("[Consolidation Recommendation]")
+    expect(reviewArtifact).toContain("# 审查报告")
+    expect(reviewArtifact.indexOf("# 审查报告")).toBeLessThan(reviewArtifact.indexOf("<!-- AUTOPILOT_REVIEW_SIDE_CAR_START -->"))
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not replace an empty main review artifact with sidecar-only content", async () => {
+    const workspace = new DefaultWorkflowWorkspace(baseDir)
+    const manager = new ReviewSidecarManager(workspace)
+    const workflowId = "wf-review-sidecar-empty-main"
+
+    await Bun.write(workspace.phaseArtifactFile(workflowId, "review"), "")
+    await manager.write(workflowId, {
+      workflowId,
+      presetMode: "safe",
+      mergeMode: "prefer_conservative",
+      completedAt: new Date().toISOString(),
+      readyToConsolidate: true,
+      updatedAt: new Date().toISOString(),
+      entries: [
+        {
+          reviewerSessionId: "r1",
+          roleName: "Business Reviewer",
+          prompt: "prompt",
+          status: "idle",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSummary: "no issue",
+        },
+      ],
+    })
+
+    await manager.syncReviewArtifact(workflowId)
+
+    const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact.trim()).toBe("")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("marks review artifacts with reordered headings as invalid", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-heading-order"
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review 标题顺序。",
+    })
+    await harness.stateStore.updateWorkflow(workflowId, { phase: "review", status: "in_progress" })
+    await Bun.write(
+      harness.workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 结论",
+        "PASS",
+        "",
+        "## 检查范围",
+        "范围",
+        "",
+        "## 发现的问题",
+        "无",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate(workflow!)
+
+    expect(evaluation.valid).toBe(false)
+    expect(evaluation.reportStatus).toBe("pass")
+    expect(evaluation.missing).toContain("section_order_invalid: ## 结论 should appear after ## Regression 风险评估")
 
     await rm(baseDir, { recursive: true, force: true })
   })

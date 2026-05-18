@@ -1,6 +1,7 @@
 import type { HumanAction } from "../human-actions/human-action"
 import type { Phase } from "../state/phase"
 import type { BlockedDecision } from "../state/workflow-runtime-state"
+import { normalizeWorkflowRunKind } from "../state/workflow-runtime-state"
 import type { PhaseTransition, PhaseTransitionInput } from "./phase-transition"
 import type { TransitionAction } from "./transition-action"
 
@@ -306,7 +307,7 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "pass") {
-        if (runtime.runKind === "review-heavy") {
+        if (normalizeWorkflowRunKind(runtime.runKind) === "review-heavy") {
           return {
             type: "advance_phase",
             nextPhase: "done",
@@ -321,7 +322,7 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
-        if (runtime.runKind === "review-heavy") {
+        if (normalizeWorkflowRunKind(runtime.runKind) === "review-heavy") {
           return {
             type: "advance_phase",
             nextPhase: "done",
@@ -419,7 +420,7 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
-        if (runtime.runKind === "verify") {
+        if (normalizeWorkflowRunKind(runtime.runKind) === "verify") {
           return {
             type: "advance_phase",
             nextPhase: "done",
@@ -457,7 +458,7 @@ export class DefaultPhaseTransition implements PhaseTransition {
     }
 
     if (workflow.phase === "develop") {
-      if (runtime.runKind === "develop" && artifact.readyForNextPhase) {
+      if (normalizeWorkflowRunKind(runtime.runKind) === "develop" && artifact.readyForNextPhase) {
         return {
           type: "advance_phase",
           nextPhase: "done",

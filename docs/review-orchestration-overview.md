@@ -17,14 +17,15 @@ It does not yet replace the entire review phase state machine with a fully struc
 
 ## Public Entry Points
 
-Review orchestration is primarily activated through these presets:
+Review orchestration is primarily activated through these full-workflow presets:
 
 - `/ap-safe`
 - `/ap-debug`
 - `/ap-review-heavy`
-- `/ap-verify`
 
 Each preset expands to `/ap-mode: ...` and then flows through normal `workflow_open` parsing.
+
+Note: public `/ap-verify` is now a verification node command. It expands to `/ap-node-run: verify`, starts at `test`, and does not run the review orchestration phase. The underlying `verify` preset still exists for internal/full-workflow preset behavior.
 
 ## Core Layers
 

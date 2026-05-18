@@ -217,6 +217,26 @@ const extractSectionBody = (content: string, heading: string, allHeadings: strin
 const sectionHasContent = (content: string, heading: string, allHeadings: string[]): boolean =>
   extractSectionBody(content, heading, allHeadings).length > 0
 
+const findOutOfOrderHeadings = (content: string, headings: string[]): string[] => {
+  const present = headings
+    .map((heading) => ({ heading, index: findHeadingIndex(content, heading) }))
+    .filter((entry) => entry.index !== -1)
+
+  const outOfOrder: string[] = []
+  let lastIndex = -1
+  for (const entry of present) {
+    if (entry.index < lastIndex) {
+      const expectedPreviousHeading = headings[headings.indexOf(entry.heading) - 1]
+      outOfOrder.push(expectedPreviousHeading
+        ? `section_order_invalid: ${entry.heading} should appear after ${expectedPreviousHeading}`
+        : `section_order_invalid: ${entry.heading}`)
+      continue
+    }
+    lastIndex = entry.index
+  }
+  return outOfOrder
+}
+
 const isOptionalSection = (heading: string): boolean =>
   heading.includes("（如适用）") || heading.includes("（非阻塞，可选）")
 
@@ -1136,6 +1156,9 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       valid: true,
       readyForNextPhase: true,
       summary: "Development complete",
+      missing: [],
+      warnings: [],
+      templateFingerprint: null,
     })
     await this.writePhaseArtifact(
       workflowId,
@@ -1289,16 +1312,22 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
   private async updatePhaseState(
     workflowId: string,
     phase: Phase,
-    patch: Partial<PhaseArtifactState>,
+    patch: Omit<Partial<PhaseArtifactState>, "templateFingerprint"> & { templateFingerprint?: string | null },
   ): Promise<void> {
     const current = (await readJsonFile<ArtifactStateFile>(this.workspace.artifactStateFile(workflowId))) ?? {}
     const existing = current[phase] ?? {
       valid: false,
       readyForNextPhase: false,
     }
+    const { templateFingerprint, ...restPatch } = patch
     current[phase] = {
       ...existing,
-      ...patch,
+      ...restPatch,
+      ...(typeof templateFingerprint === "string" ? { templateFingerprint } : {}),
+    }
+    const nextPhase = current[phase]
+    if (templateFingerprint === null && nextPhase) {
+      delete nextPhase.templateFingerprint
     }
     await writeJsonFile(this.workspace.artifactStateFile(workflowId), current)
   }
@@ -1347,6 +1376,8 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       if (!content.includes(sectionRule.title)) {
         missing.push(sectionRule.title)
       }
+
+      missing.push(...findOutOfOrderHeadings(content, [sectionRule.title, ...sectionRule.sections]))
 
       for (const section of sectionRule.sections) {
         if (isOptionalSection(section)) {

@@ -455,6 +455,36 @@ describe("workflow open request", () => {
     }
   })
 
+  it("normalizes deprecated test-heavy node-run directives to verify", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-legacy-test-heavy-node-run-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        "请启动 Autopilot workflow，并按下面的请求执行。/ap-node-run: test-heavy",
+        workspaceRoot,
+      )
+
+      expect(result.runKind).toBe("verify")
+      expect(result.needsClarification).toBe(false)
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("normalizes deprecated structured test-heavy runKind to verify", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-legacy-test-heavy-json-"))
+    try {
+      const result = await buildWorkflowOpenRequest(
+        JSON.stringify({ prompt: "请重测。", runKind: "test-heavy" }),
+        workspaceRoot,
+      )
+
+      expect(result.runKind).toBe("verify")
+      expect(result.prompt).toBe("请重测。")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
   it("treats /ap-doc-only input as explicit workflow intent without clarification", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-doc-only-"))
     try {

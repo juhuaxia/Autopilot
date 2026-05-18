@@ -4,6 +4,7 @@ import { DefaultWorkflowCommandRunner } from "../commands/default-workflow-comma
 import { DefaultWorkflowPluginCommandAdapter } from "../commands/opencode-plugin-command-adapter"
 import { AUTOPILOT_PRESET_DEFINITIONS } from "../commands/autopilot-presets"
 import { buildAutopilotCommandPayload } from "../commands/autopilot-command-presets"
+import { normalizeWorkflowRunKind } from "../../../core/src/state/workflow-runtime-state"
 import { createHarness } from "../bootstrap/create-harness"
 import { runWorkflowDoctor } from "../diagnostics/workflow-doctor"
 import { runAutopilotUpdate } from "../install/autopilot-updater"
@@ -165,9 +166,10 @@ function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadat
 function buildWorkflowTodos(args: {
   phase: Phase
   status: WorkflowStatus
-  runKind?: "full" | "review-heavy" | "develop" | "verify" | null
+  runKind?: "full" | "review-heavy" | "develop" | "verify" | "test-heavy" | null
 }): Array<{ title: string; completed: boolean }> {
-  const { phase, status, runKind } = args
+  const { phase, status } = args
+  const runKind = normalizeWorkflowRunKind(args.runKind)
   const titlePrefix = !runKind || runKind === "full"
     ? "Workflow"
     : runKind === "review-heavy"
@@ -219,7 +221,7 @@ async function syncHostTodos(args: {
   const workflow = await readJsonFile<{ phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string }>(
     workspace.workflowStateFile(args.workflowId),
   )
-  const runtime = await readJsonFile<{ runKind?: "full" | "review-heavy" | "develop" | "verify" | null }>(
+  const runtime = await readJsonFile<{ runKind?: "full" | "review-heavy" | "develop" | "verify" | "test-heavy" | null }>(
     workspace.workflowRuntimeStateFile(args.workflowId),
   )
 
@@ -354,6 +356,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
       }
       cfg.agent ??= {}
       cfg.command ??= {}
+      delete cfg.command["ap-test-heavy"]
       cfg.agent[primaryAgent.name] = {
         mode: primaryAgent.mode,
         description: primaryAgent.description,

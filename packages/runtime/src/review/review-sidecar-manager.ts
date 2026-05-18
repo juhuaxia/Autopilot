@@ -221,9 +221,13 @@ export class ReviewSidecarManager {
     )
 
     const stripped = hydrated.replace(new RegExp(
-      `[\\s\\S]*?${ReviewSidecarManager.SIDE_CAR_START}[\\s\\S]*?${ReviewSidecarManager.SIDE_CAR_END}\\s*`,
+      `${ReviewSidecarManager.SIDE_CAR_START}[\\s\\S]*?${ReviewSidecarManager.SIDE_CAR_END}\\s*`,
       "m",
     ), "").trimEnd()
+
+    if (!stripped.includes("# 审查报告") || !stripped.includes("## 结论")) {
+      return
+    }
 
     const lines = [
       ReviewSidecarManager.SIDE_CAR_START,

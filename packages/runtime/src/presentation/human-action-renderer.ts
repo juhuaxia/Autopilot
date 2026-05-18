@@ -1,5 +1,5 @@
 import type { HumanActionRecord } from "../../../core/src/human-actions/human-action-record"
-import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
+import { normalizeWorkflowRunKind, type WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
 const divider = "=".repeat(64)
@@ -10,18 +10,20 @@ const verifyPhaseOrder = ["test", "done"] as const
 type ProgressPhase = typeof fullPhaseOrder[number]
 
 function describeRunKind(runtime: WorkflowRuntimeState | null): string {
-  if (!runtime?.runKind || runtime.runKind === "full") {
+  const runKind = normalizeWorkflowRunKind(runtime?.runKind)
+  if (!runKind || runKind === "full") {
     return "full workflow"
   }
-  return `node run (${runtime.runKind})`
+  return `node run (${runKind})`
 }
 
 function renderProgressTodos(workflow: WorkflowState, runtime: WorkflowRuntimeState | null): string[] {
-  const phaseOrder: readonly ProgressPhase[] = runtime?.runKind === "review-heavy"
+  const runKind = normalizeWorkflowRunKind(runtime?.runKind)
+  const phaseOrder: readonly ProgressPhase[] = runKind === "review-heavy"
     ? reviewHeavyPhaseOrder
-    : runtime?.runKind === "develop"
+    : runKind === "develop"
       ? developPhaseOrder
-      : runtime?.runKind === "verify"
+      : runKind === "verify"
         ? verifyPhaseOrder
       : fullPhaseOrder
   const currentIndex = phaseOrder.indexOf(workflow.phase as ProgressPhase)
@@ -164,8 +166,9 @@ export function renderHumanActionBlock(args: {
   if (runtime?.presetMode) {
     lines.push(`Preset mode: ${runtime.presetMode}`)
   }
-  if (runtime?.runKind) {
-    lines.push(`Run kind: ${runtime.runKind}`)
+  const normalizedRunKind = normalizeWorkflowRunKind(runtime?.runKind)
+  if (normalizedRunKind) {
+    lines.push(`Run kind: ${normalizedRunKind}`)
   }
   lines.push(`Workflow kind: ${describeRunKind(runtime)}`)
   if (runtime?.parentWorkflowId) {

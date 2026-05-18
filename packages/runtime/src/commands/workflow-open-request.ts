@@ -1,6 +1,7 @@
 import { access, readdir, readFile } from "node:fs/promises"
 import { isAbsolute, resolve } from "node:path"
 import type { WorkflowPresetMode } from "../../../core/src/state/workflow-runtime-state"
+import { normalizeWorkflowRunKind } from "../../../core/src/state/workflow-runtime-state"
 import { isAutopilotPresetMode } from "./autopilot-presets"
 import { AUTOPILOT_COMMAND_BRIDGE_PROMPT } from "./autopilot-command-presets"
 import type { ImageSummaryService } from "../images/image-summary-service"
@@ -18,7 +19,7 @@ const READ_TARGET_PATTERN = /@read\(([^)]+)\)/g
 const AP_START_AT_PATTERN = /^\s*\/ap-start-at\s*:\s*(develop)\s*$/i
 const AP_DOC_PATTERN = /^\s*\/ap-doc\s*:\s*(.+?)\s*$/i
 const AP_MODE_PATTERN = /^\s*\/ap-mode\s*:\s*([\w-]+)\s*$/i
-const AP_NODE_RUN_PATTERN = /\/ap-node-run\s*:\s*(develop|verify)\b/i
+const AP_NODE_RUN_PATTERN = /\/ap-node-run\s*:\s*(test-heavy|develop|verify)\b/i
 
 type ReadTargetKind = "text" | "image" | "unknown"
 
@@ -167,8 +168,9 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
       }
 
       const nodeRunMatch = trimmed.match(AP_NODE_RUN_PATTERN)
-      if (nodeRunMatch?.[1] === "develop" || nodeRunMatch?.[1] === "verify") {
-        runKind = nodeRunMatch[1]
+      const normalizedRunKind = normalizeWorkflowRunKind(nodeRunMatch?.[1])
+      if (normalizedRunKind && normalizedRunKind !== "full" && normalizedRunKind !== "review-heavy") {
+        runKind = normalizedRunKind
         hasExplicitAutopilotDirective = true
         return ""
       }
@@ -241,8 +243,9 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
       ? rawMode as WorkflowPresetMode
       : undefined
     const rawRunKind = (parsed as { runKind?: unknown }).runKind
-    const runKind = rawRunKind === "develop" || rawRunKind === "verify"
-      ? rawRunKind as WorkflowRunKind
+    const normalizedRunKind = normalizeWorkflowRunKind(rawRunKind)
+    const runKind = normalizedRunKind === "develop" || normalizedRunKind === "verify"
+      ? normalizedRunKind
       : undefined
 
     const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined || mode !== undefined || runKind !== undefined

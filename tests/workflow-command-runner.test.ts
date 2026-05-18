@@ -233,8 +233,8 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
-  it("creates a verify node run for a completed requested workflow", async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-node-run-"))
+  it("normalizes legacy test-heavy runKind payloads to verify node runs", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-legacy-test-heavy-node-run-"))
     const harness = await createHarness(baseDir)
     const runner = new DefaultWorkflowCommandRunner()
 
@@ -338,7 +338,7 @@ describe("workflow command runner", () => {
       workflowId: "done-verifyable",
       payload: JSON.stringify({
         prompt: "请做最终验收。",
-        runKind: "verify",
+        runKind: "test-heavy",
       }),
     })
 
