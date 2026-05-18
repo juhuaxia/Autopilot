@@ -5,7 +5,6 @@ import type { WorkflowState } from "../../../core/src/state/workflow-state"
 const divider = "=".repeat(64)
 const fullPhaseOrder = ["spec_refinement", "plan", "develop", "review", "test", "done"] as const
 const reviewHeavyPhaseOrder = ["review", "done"] as const
-const testHeavyPhaseOrder = ["test", "done"] as const
 const developPhaseOrder = ["develop", "done"] as const
 const verifyPhaseOrder = ["test", "done"] as const
 type ProgressPhase = typeof fullPhaseOrder[number]
@@ -20,13 +19,11 @@ function describeRunKind(runtime: WorkflowRuntimeState | null): string {
 function renderProgressTodos(workflow: WorkflowState, runtime: WorkflowRuntimeState | null): string[] {
   const phaseOrder: readonly ProgressPhase[] = runtime?.runKind === "review-heavy"
     ? reviewHeavyPhaseOrder
-    : runtime?.runKind === "test-heavy"
-      ? testHeavyPhaseOrder
-      : runtime?.runKind === "develop"
-        ? developPhaseOrder
-        : runtime?.runKind === "verify"
-          ? verifyPhaseOrder
-        : fullPhaseOrder
+    : runtime?.runKind === "develop"
+      ? developPhaseOrder
+      : runtime?.runKind === "verify"
+        ? verifyPhaseOrder
+      : fullPhaseOrder
   const currentIndex = phaseOrder.indexOf(workflow.phase as ProgressPhase)
   if (currentIndex === -1) {
     return []

@@ -233,8 +233,8 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
-  it("creates a test-heavy node run for a completed requested workflow", async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-test-heavy-node-run-"))
+  it("creates a verify node run for a completed requested workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-node-run-"))
     const harness = await createHarness(baseDir)
     const runner = new DefaultWorkflowCommandRunner()
 
@@ -256,20 +256,20 @@ describe("workflow command runner", () => {
       workflowId: "done-testable",
       payload: JSON.stringify({
         prompt: "请对这个已完成任务做一次重测。",
-        runKind: "test-heavy",
+        runKind: "verify",
       }),
     })
 
     const workflows = await harness.stateStore.listWorkflows?.() ?? []
-    const nodeRun = workflows.find((w) => w.workflowId.startsWith("done-testable-test-heavy-"))
+    const nodeRun = workflows.find((w) => w.workflowId.startsWith("done-testable-verify-"))
     const runtime = nodeRun ? await harness.stateStore.getRuntime(nodeRun.workflowId) : null
 
     expect(result.ok).toBe(true)
-    expect(result.output).toContain("已基于 workflow done-testable 创建 test-heavy 节点任务。")
+    expect(result.output).toContain("已基于 workflow done-testable 创建 verify 节点任务。")
     expect(result.output).toContain("Phase: test")
-    expect(result.output).toContain("Run kind: test-heavy")
+    expect(result.output).toContain("Run kind: verify")
     expect(result.output).toContain("Parent workflow: done-testable")
-    expect(runtime?.runKind).toBe("test-heavy")
+    expect(runtime?.runKind).toBe("verify")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -507,8 +507,8 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
-  it("chains develop from a test-heavy node run using the original source workflow", async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-test-heavy-develop-chain-"))
+  it("chains develop from a verify node run using the original source workflow", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-develop-chain-"))
     const harness = await createHarness(baseDir)
     const runner = new DefaultWorkflowCommandRunner()
 
@@ -524,33 +524,33 @@ describe("workflow command runner", () => {
       approved: true,
     })
 
-    const testResult = await runner.run({
+    const verifyResult = await runner.run({
       harness,
       command: "workflow-open",
       workflowId: "root-test-done",
-      payload: JSON.stringify({ prompt: "先重测。", runKind: "test-heavy" }),
+      payload: JSON.stringify({ prompt: "先重测。", runKind: "verify" }),
     })
 
-    const testWorkflows = await harness.stateStore.listWorkflows?.() ?? []
-    const testNode = testWorkflows.find((w) => w.workflowId.startsWith("root-test-done-test-heavy-"))
-    expect(testResult.ok).toBe(true)
-    expect(testNode).toBeDefined()
+    const verifyWorkflows = await harness.stateStore.listWorkflows?.() ?? []
+    const verifyNode = verifyWorkflows.find((w) => w.workflowId.startsWith("root-test-done-verify-"))
+    expect(verifyResult.ok).toBe(true)
+    expect(verifyNode).toBeDefined()
 
     const developResult = await runner.run({
       harness,
       command: "workflow-open",
-      workflowId: testNode!.workflowId,
+      workflowId: verifyNode!.workflowId,
       payload: JSON.stringify({ prompt: "基于测试结果修复。", runKind: "develop" }),
     })
 
     const workflows = await harness.stateStore.listWorkflows?.() ?? []
-    const developNode = workflows.find((w) => w.workflowId.startsWith(`${testNode!.workflowId}-develop-`))
+    const developNode = workflows.find((w) => w.workflowId.startsWith(`${verifyNode!.workflowId}-develop-`))
     const runtime = developNode ? await harness.stateStore.getRuntime(developNode.workflowId) : null
 
     expect(developResult.ok).toBe(true)
     expect(developResult.output).toContain("创建 develop 节点任务")
     expect(runtime?.runKind).toBe("develop")
-    expect(runtime?.parentWorkflowId).toBe(testNode!.workflowId)
+    expect(runtime?.parentWorkflowId).toBe(verifyNode!.workflowId)
     expect(runtime?.sourceWorkflowId).toBe("root-test-done")
 
     await rm(baseDir, { recursive: true, force: true })

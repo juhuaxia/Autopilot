@@ -131,7 +131,6 @@ Available commands:
 - `/ap-safe`: full workflow mode; routes to the `workflow` agent and expands to preset `safe`
 - `/ap-debug`: full workflow mode; routes to the `workflow` agent and expands to preset `debug`
 - `/ap-review-heavy`: node review mode; on completed workflow context it creates a review node run, otherwise it expands to preset `review-heavy`
-- `/ap-test-heavy`: node test mode; creates a test node run against an existing workflow context
 - `/ap-develop`: node develop mode; creates a develop node run against an existing workflow context
 - `/ap-verify`: node verify mode; creates a verify node run against an existing workflow context
 
@@ -146,13 +145,12 @@ Current preset / node behavior:
 - `review-heavy`: default phase order with extra review scrutiny and regression discovery bias
 - `verify`: default phase order with validation-first guidance and concise review
 - `review-heavy` node runs: `review -> done`
-- `test-heavy` node runs: `test -> done`
 - `develop` node runs: `develop -> done`
 - `verify` node runs: `test -> done`
 
 Node run metadata:
 
-- `runKind`: `full`, `review-heavy`, `test-heavy`, `develop`, or `verify`
+- `runKind`: `full`, `review-heavy`, `develop`, or `verify`
 - `parentWorkflowId`: the immediate parent workflow/run
 - `sourceWorkflowId`: the original root workflow that supplied the artifacts
 

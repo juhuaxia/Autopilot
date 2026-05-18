@@ -15,7 +15,6 @@ Autopilot registers these OpenCode-visible commands through plugin config inject
 - `/ap-safe`
 - `/ap-debug`
 - `/ap-review-heavy`
-- `/ap-test-heavy`
 - `/ap-develop`
 - `/ap-verify`
 
@@ -34,9 +33,8 @@ Current mapping:
 - `/ap-safe <request>` -> prompt body + `/ap-mode: safe`
 - `/ap-debug <request>` -> prompt body + `/ap-mode: debug`
 - `/ap-review-heavy <request>` -> prompt body + `/ap-mode: review-heavy`
-- `/ap-test-heavy <request>` -> prompt body + `/ap-node-run: test-heavy`
 - `/ap-develop <request>` -> prompt body + `/ap-node-run: develop`
-- `/ap-verify <request>` -> prompt body + `/ap-mode: verify`
+- `/ap-verify <request>` -> prompt body + `/ap-node-run: verify`
 
 The command template keeps `$ARGUMENTS` as plain prompt text rather than embedding it inside JSON. This avoids quote/newline escaping failures in OpenCode command expansion.
 
@@ -59,7 +57,6 @@ This keeps the preset visible to downstream workflow stages while preserving str
 Node commands create a new workflow run linked to an existing completed workflow context.
 
 - `runKind=review-heavy` -> `review -> done`
-- `runKind=test-heavy` -> `test -> done`
 - `runKind=develop` -> `develop -> done`
 - `runKind=verify` -> `test -> done`
 

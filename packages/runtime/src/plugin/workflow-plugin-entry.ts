@@ -131,11 +131,6 @@ const AUTOPILOT_HOST_COMMANDS = Object.fromEntries(
 ) as Record<string, { description: string; template: string; agent: string }>
 
 const AUTOPILOT_NODE_COMMANDS = {
-  "ap-test-heavy": {
-    description: "Test-heavy node mode: run focused verification/test reporting against an existing workflow context",
-    template: `${buildAutopilotCommandPayload({ preset: "verify", prompt: "$ARGUMENTS" })}\n/ap-node-run: test-heavy`,
-    agent: "workflow",
-  },
   "ap-develop": {
     description: "Develop node mode: run focused develop/fix work and produce a standard develop report against an existing workflow context",
     template: `${AUTOPILOT_PRESET_DEFINITIONS.safe.bridge.prompt}\n$ARGUMENTS\n/ap-node-run: develop`,
@@ -170,18 +165,16 @@ function buildPrimaryAgentMetadata(baseDir: string): WorkflowPrimaryAgentMetadat
 function buildWorkflowTodos(args: {
   phase: Phase
   status: WorkflowStatus
-  runKind?: "full" | "review-heavy" | "test-heavy" | "develop" | "verify" | null
+  runKind?: "full" | "review-heavy" | "develop" | "verify" | null
 }): Array<{ title: string; completed: boolean }> {
   const { phase, status, runKind } = args
   const titlePrefix = !runKind || runKind === "full"
     ? "Workflow"
     : runKind === "review-heavy"
       ? "Review Run"
-      : runKind === "test-heavy"
-        ? "Test Run"
-        : runKind === "develop"
-          ? "Develop Run"
-          : "Verify Run"
+      : runKind === "develop"
+        ? "Develop Run"
+        : "Verify Run"
   const phases: Array<{ key: Extract<Phase, "spec_refinement" | "plan" | "develop" | "review" | "test" | "done">; title: string }> = [
     { key: "spec_refinement", title: `${titlePrefix} / Refinement` },
     { key: "plan", title: `${titlePrefix} / Plan` },
@@ -194,7 +187,7 @@ function buildWorkflowTodos(args: {
     ? phases
     : runKind === "review-heavy"
       ? phases.filter((item) => item.key === "review" || item.key === "done")
-      : runKind === "test-heavy" || runKind === "verify"
+      : runKind === "verify"
         ? phases.filter((item) => item.key === "test" || item.key === "done")
         : phases.filter((item) => item.key === "develop" || item.key === "done")
   const currentIndex = visiblePhases.findIndex((item) => item.key === phase || (phase === "blocked" && item.key === "test"))
@@ -226,7 +219,7 @@ async function syncHostTodos(args: {
   const workflow = await readJsonFile<{ phase?: Phase; status?: WorkflowStatus; activeSessionId?: string | null; workflowId?: string }>(
     workspace.workflowStateFile(args.workflowId),
   )
-  const runtime = await readJsonFile<{ runKind?: "full" | "review-heavy" | "test-heavy" | "develop" | "verify" | null }>(
+  const runtime = await readJsonFile<{ runKind?: "full" | "review-heavy" | "develop" | "verify" | null }>(
     workspace.workflowRuntimeStateFile(args.workflowId),
   )
 

@@ -31,8 +31,6 @@ describe("workflow plugin entry skeleton", () => {
     expect(cfg.command?.["ap-debug"]?.template).toContain("/ap-mode: debug")
     expect(cfg.command?.["ap-review-heavy"]?.template).toContain("/ap-mode: review-heavy")
     expect(cfg.command?.["ap-verify"]?.template).toContain("/ap-node-run: verify")
-    expect(cfg.command?.["ap-test-heavy"]?.template).toContain("/ap-node-run: test-heavy")
     expect(cfg.command?.["ap-develop"]?.template).toContain("/ap-node-run: develop")
-    expect(cfg.command?.["ap-verify"]?.template).toContain("/ap-node-run: verify")
   })
 })

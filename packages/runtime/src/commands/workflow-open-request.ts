@@ -18,7 +18,7 @@ const READ_TARGET_PATTERN = /@read\(([^)]+)\)/g
 const AP_START_AT_PATTERN = /^\s*\/ap-start-at\s*:\s*(develop)\s*$/i
 const AP_DOC_PATTERN = /^\s*\/ap-doc\s*:\s*(.+?)\s*$/i
 const AP_MODE_PATTERN = /^\s*\/ap-mode\s*:\s*([\w-]+)\s*$/i
-const AP_NODE_RUN_PATTERN = /\/ap-node-run\s*:\s*(test-heavy|develop|verify)\b/i
+const AP_NODE_RUN_PATTERN = /\/ap-node-run\s*:\s*(develop|verify)\b/i
 
 type ReadTargetKind = "text" | "image" | "unknown"
 
@@ -167,7 +167,7 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
       }
 
       const nodeRunMatch = trimmed.match(AP_NODE_RUN_PATTERN)
-      if (nodeRunMatch?.[1] === "test-heavy" || nodeRunMatch?.[1] === "develop" || nodeRunMatch?.[1] === "verify") {
+      if (nodeRunMatch?.[1] === "develop" || nodeRunMatch?.[1] === "verify") {
         runKind = nodeRunMatch[1]
         hasExplicitAutopilotDirective = true
         return ""
@@ -241,7 +241,7 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
       ? rawMode as WorkflowPresetMode
       : undefined
     const rawRunKind = (parsed as { runKind?: unknown }).runKind
-    const runKind = rawRunKind === "test-heavy" || rawRunKind === "develop" || rawRunKind === "verify"
+    const runKind = rawRunKind === "develop" || rawRunKind === "verify"
       ? rawRunKind as WorkflowRunKind
       : undefined
 

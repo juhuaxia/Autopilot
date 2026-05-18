@@ -419,11 +419,11 @@ export class DefaultPhaseTransition implements PhaseTransition {
       }
 
       if (artifact.reportStatus === "fail") {
-        if (runtime.runKind === "test-heavy") {
+        if (runtime.runKind === "verify") {
           return {
             type: "advance_phase",
             nextPhase: "done",
-            reason: "Test-heavy node run failed and produced a report",
+            reason: "Verify node run failed and produced a report",
           }
         }
         const diagnostic = buildReportFailureBlockedDiagnostic(input, "test")

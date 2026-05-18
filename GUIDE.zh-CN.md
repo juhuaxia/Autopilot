@@ -129,7 +129,6 @@ Autopilot 同时注册了可被 OpenCode 发现的 slash 命令，输入 `/a` �
 - `/ap-safe`：完整工作流模式；路由到 `workflow` agent，展开为 `safe` 预设
 - `/ap-debug`：完整工作流模式；路由到 `workflow` agent，展开为 `debug` 预设
 - `/ap-review-heavy`：节点评审模式；在已完成的工作流上下文中创建 review 节点运行，否则展开为 `review-heavy` 预设
-- `/ap-test-heavy`：节点测试模式；在已有工作流上下文中创建 test 节点运行
 - `/ap-develop`：节点开发模式；在已有工作流上下文中创建 develop 节点运行
 - `/ap-verify`：节点验证模式；在已有工作流上下文中创建 verify 节点运行
 
@@ -144,13 +143,12 @@ Autopilot 同时注册了可被 OpenCode 发现的 slash 命令，输入 `/a` �
 - `review-heavy`：默认阶段顺序，额外关注评审和回归发现
 - `verify`：默认阶段顺序，以验证优先，评审更精简
 - `review-heavy` 节点运行：`review -> done`
-- `test-heavy` 节点运行：`test -> done`
 - `develop` 节点运行：`develop -> done`
 - `verify` 节点运行：`test -> done`
 
 节点运行元数据：
 
-- `runKind`：`full`、`review-heavy`、`test-heavy`、`develop` 或 `verify`
+- `runKind`：`full`、`review-heavy`、`develop` 或 `verify`
 - `parentWorkflowId`：直接父工作流/运行
 - `sourceWorkflowId`：提供 artifacts 的原始根工作流
 

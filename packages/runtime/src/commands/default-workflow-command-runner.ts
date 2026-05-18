@@ -139,20 +139,16 @@ async function buildNodeRunRequest(args: {
   harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
   sourceWorkflowId: string
   prompt: string
-  runKind: "test-heavy" | "develop" | "verify"
+  runKind: "develop" | "verify"
   chainWorkflowId?: string
 }): Promise<string> {
   const phases = ["spec_refinement", "plan", "develop", "review", "test"] as const
-  const intro = args.runKind === "test-heavy"
-    ? "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 test-heavy 验证。"
-    : args.runKind === "develop"
-      ? "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 develop 修复/开发。"
-      : "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 verify 验证。"
-  const artifactRule = args.runKind === "test-heavy"
-    ? "不要修改应用代码；只更新本次 test artifact。"
-    : args.runKind === "develop"
-      ? "本次需要修改代码并输出标准 develop artifact。"
-      : "不要修改应用代码；只更新本次 verify artifact。"
+  const intro = args.runKind === "develop"
+    ? "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 develop 修复/开发。"
+    : "请基于指定 workflow 的历史 artifacts，对当前代码执行一次独立的 verify 验证。"
+  const artifactRule = args.runKind === "develop"
+    ? "本次需要修改代码并输出标准 develop artifact。"
+    : "不要修改应用代码；只更新本次 verify artifact。"
   const lines = [
     intro,
     "不要把历史 artifacts 当作通过凭证；它们只用于理解原需求、计划、实现范围、历史风险和测试记录。",
@@ -665,23 +661,23 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         })
       }
 
-      const chainedNodeContext = openRequest.runKind === "develop" || openRequest.runKind === "verify" || openRequest.runKind === "test-heavy"
+      const chainedNodeContext = openRequest.runKind === "develop" || openRequest.runKind === "verify"
         ? await resolveNodeChainContext({ harness, workflowId })
         : null
-      const completedRequestedWorkflow = (openRequest.mode === "review-heavy" || openRequest.runKind === "test-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify")
+      const completedRequestedWorkflow = (openRequest.mode === "review-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify")
         ? await findCompletedWorkflow(harness, chainedNodeContext?.sourceWorkflowId ?? workflowId)
         : null
       if (completedRequestedWorkflow) {
-        const requestedNodeRunKind: "review-heavy" | "test-heavy" | "develop" | "verify" | undefined = openRequest.mode === "review-heavy"
+        const requestedNodeRunKind: "review-heavy" | "develop" | "verify" | undefined = openRequest.mode === "review-heavy"
           ? "review-heavy"
-          : openRequest.runKind === "test-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify"
+          : openRequest.runKind === "develop" || openRequest.runKind === "verify"
             ? openRequest.runKind
             : undefined
         if (!requestedNodeRunKind) {
           throw new Error("Node run request missing run kind")
         }
         const sourceWorkflowId = chainedNodeContext?.sourceWorkflowId ?? completedRequestedWorkflow.workflowId
-        const parentWorkflowId = requestedNodeRunKind === "develop" || requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+        const parentWorkflowId = requestedNodeRunKind === "develop" || requestedNodeRunKind === "verify"
           ? (chainedNodeContext?.parentWorkflowId ?? completedRequestedWorkflow.workflowId)
           : completedRequestedWorkflow.workflowId
         const targetId = resolveNodeRunWorkflowTargetId(parentWorkflowId, requestedNodeRunKind)
@@ -707,12 +703,12 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             })
         const startAt = requestedNodeRunKind === "develop"
           ? "develop"
-          : requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+          : requestedNodeRunKind === "verify"
             ? "test"
             : "review"
         const presetMode = requestedNodeRunKind === "review-heavy"
           ? "review-heavy"
-          : requestedNodeRunKind === "test-heavy" || requestedNodeRunKind === "verify"
+          : requestedNodeRunKind === "verify"
             ? "verify"
             : null
         await initializeWorkflow({
