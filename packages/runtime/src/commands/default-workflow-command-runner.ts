@@ -921,19 +921,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           // Fallback: no active workflow found, treat as normal answer
           await harness.humanActionService.answer(workflowId, answers)
         } else if (lifecycleDecision === "new" || lifecycleDecision === "2") {
-          // User chose to start fresh — archive old active workflow and create new
+          // User chose to start fresh — keep old workflow untouched and create new
           const pending = await readPendingClarification(harness, workflowId)
           await clearPendingClarification(harness, workflowId)
-          const sourceWorkflowId = pending?.sourceWorkflowId ?? workflowId
-          if (sourceWorkflowId) {
-            const sourceWorkflow = await harness.stateStore.getWorkflow(sourceWorkflowId)
-            if (sourceWorkflow && isActiveWorkflow(sourceWorkflow)) {
-              await harness.stateStore.updateWorkflow(sourceWorkflowId, {
-                status: "blocked",
-                blockReason: "archived-by-user",
-              })
-            }
-          }
           const originalMode = pending?.mode
           let originalPrompt: string | undefined
           if (pending?.rawPayload) {

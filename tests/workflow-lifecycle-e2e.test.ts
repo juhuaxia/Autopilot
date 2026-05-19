@@ -210,7 +210,7 @@ describe("workflow lifecycle: single active + archive", () => {
       await rm(baseDir, { recursive: true, force: true })
     })
 
-    it("archives active workflow and creates new when user answers new", async () => {
+    it("keeps active workflow untouched and creates new when user answers new", async () => {
       const baseDir = await mkdtemp(join(tmpdir(), "lifecycle-active-new-"))
       const harness = await createHarness(baseDir)
       const runner = new DefaultWorkflowCommandRunner()
@@ -250,9 +250,10 @@ describe("workflow lifecycle: single active + archive", () => {
       expect(newResult.output).toContain("Phase: spec_refinement")
       expect(newResult.output).not.toContain("Workflow: active-task\n")
 
-      // Old workflow should be archived (marked as blocked/abandoned)
+      // Old workflow should remain untouched
       const oldWorkflow = await harness.stateStore.getWorkflow("active-task")
-      expect(oldWorkflow?.status).toBe("blocked")
+      expect(oldWorkflow?.status).toBe("in_progress")
+      expect(oldWorkflow?.blockReason).toBeNull()
 
       await rm(baseDir, { recursive: true, force: true })
     })
