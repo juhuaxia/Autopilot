@@ -111,6 +111,7 @@ describe("workflow lifecycle: single active + archive", () => {
       expect(result.output).toContain("active-task")
       expect(result.output).toMatch(/继续|恢复/)
       expect(result.output).toMatch(/新开|新建/)
+      expect(result.output).toContain("保留旧工作流")
 
       await rm(baseDir, { recursive: true, force: true })
     })
@@ -142,6 +143,10 @@ describe("workflow lifecycle: single active + archive", () => {
         }),
       })
 
+      await harness.stateStore.updateRuntime("active-task", {
+        ignoredForRoutingAt: new Date().toISOString(),
+      })
+
       // User answers "resume"
       const resumeResult = await runner.run({
         harness,
@@ -153,6 +158,8 @@ describe("workflow lifecycle: single active + archive", () => {
       expect(resumeResult.ok).toBe(true)
       expect(resumeResult.output).toContain("Workflow: active-task")
       expect(resumeResult.output).toContain("Phase: develop")
+      const resumedRuntime = await harness.stateStore.getRuntime("active-task")
+      expect(resumedRuntime?.ignoredForRoutingAt).toBeNull()
 
       await rm(baseDir, { recursive: true, force: true })
     })
@@ -254,6 +261,117 @@ describe("workflow lifecycle: single active + archive", () => {
       const oldWorkflow = await harness.stateStore.getWorkflow("active-task")
       expect(oldWorkflow?.status).toBe("in_progress")
       expect(oldWorkflow?.blockReason).toBeNull()
+      const oldRuntime = await harness.stateStore.getRuntime("active-task")
+      expect(typeof oldRuntime?.ignoredForRoutingAt).toBe("string")
+
+      await rm(baseDir, { recursive: true, force: true })
+    })
+
+    it("does not consider the ignored old workflow active for later new requests", async () => {
+      const baseDir = await mkdtemp(join(tmpdir(), "lifecycle-active-new-ignore-routing-"))
+      const harness = await createHarness(baseDir)
+      const runner = new DefaultWorkflowCommandRunner()
+
+      await initializeWorkflow({
+        workflowId: "old-task",
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "旧任务。",
+      })
+      await harness.stateStore.updateWorkflow("old-task", {
+        phase: "test",
+        status: "waiting_human",
+      })
+
+      await runner.run({
+        harness,
+        command: "workflow-open",
+        workflowId: "autopilot",
+        payload: JSON.stringify({
+          prompt: "请帮我开发另一个功能。",
+          mode: "safe",
+        }),
+      })
+
+      const newResult = await runner.run({
+        harness,
+        command: "workflow-answer",
+        workflowId: "autopilot",
+        payload: JSON.stringify({ lifecycle_decision: "new" }),
+      })
+
+      expect(newResult.ok).toBe(true)
+      const newWorkflowIdMatch = newResult.output.match(/Workflow: (autopilot-[^\n]+)/)
+      expect(newWorkflowIdMatch?.[1]).toBeDefined()
+      const newWorkflowId = newWorkflowIdMatch?.[1] as string
+
+      await harness.stateStore.updateWorkflow(newWorkflowId, {
+        phase: "develop",
+        status: "in_progress",
+      })
+
+      const continueResult = await runner.run({
+        harness,
+        command: "workflow-open",
+        workflowId: "autopilot",
+        payload: JSON.stringify({
+          prompt: "请再帮我开发第三个功能。",
+          mode: "safe",
+        }),
+      })
+
+      expect(continueResult.ok).toBe(true)
+      expect(continueResult.output).toContain("检测到未完成的工作流")
+      expect(continueResult.output).toContain(newWorkflowId)
+      expect(continueResult.output).not.toContain("old-task")
+
+      await rm(baseDir, { recursive: true, force: true })
+    })
+
+    it("preset requests do not surface ignored workflows in the active-workflow confirmation", async () => {
+      const baseDir = await mkdtemp(join(tmpdir(), "lifecycle-active-ignored-preset-"))
+      const harness = await createHarness(baseDir)
+      const runner = new DefaultWorkflowCommandRunner()
+
+      await initializeWorkflow({
+        workflowId: "old-task",
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "旧任务。",
+      })
+      await harness.stateStore.updateWorkflow("old-task", {
+        phase: "test",
+        status: "waiting_human",
+      })
+      await harness.stateStore.updateRuntime("old-task", {
+        ignoredForRoutingAt: new Date(Date.now() - 60_000).toISOString(),
+      })
+
+      await initializeWorkflow({
+        workflowId: "newer-task",
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "较新的任务。",
+      })
+      await harness.stateStore.updateWorkflow("newer-task", {
+        phase: "develop",
+        status: "in_progress",
+      })
+
+      const result = await runner.run({
+        harness,
+        command: "workflow-open",
+        workflowId: "autopilot",
+        payload: JSON.stringify({
+          prompt: "请帮我开发另一个功能。",
+          mode: "safe",
+        }),
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.output).toContain("检测到未完成的工作流")
+      expect(result.output).toContain("newer-task")
+      expect(result.output).not.toContain("old-task")
 
       await rm(baseDir, { recursive: true, force: true })
     })

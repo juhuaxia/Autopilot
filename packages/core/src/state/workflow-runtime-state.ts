@@ -48,6 +48,7 @@ export interface WorkflowRuntimeState {
   startMode?: WorkflowStartMode
   skippedPhases?: Array<Extract<import("./phase").Phase, "spec_refinement" | "plan">>
   outOfBandEditsDetected?: boolean
+  ignoredForRoutingAt?: string | null
   resyncCount?: number
   lastResyncedAt?: string | null
   resyncedFromPhase?: Extract<import("./phase").Phase, "review" | "test"> | null

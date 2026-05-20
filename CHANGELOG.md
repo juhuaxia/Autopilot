@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-20
+
+### Added
+
+- Added routing-ignore runtime state so an older active workflow can be preserved without being auto-selected for later preset routing.
+- Added stronger develop/review/test validation prompt policies that explicitly require relevant checks, skipped-check reporting, and evidence-based pass/fail decisions.
+
+### Changed
+
+- Active-workflow lifecycle confirmation now makes the "start new" behavior explicit: the old workflow is preserved but no longer auto-routed for future preset requests.
+- Resuming an ignored workflow now clears its routing-ignore marker so it can become the active workflow again.
+
+### Fixed
+
+- Fixed preset workflow-open routing so intentionally ignored older workflows do not reappear in later active-workflow confirmations.
+- Fixed lifecycle resume/new flows so ignored-routing state is restored correctly across follow-up decisions.
+
+### Verification
+
+- `bun test tests/workflow-engine.test.ts tests/workflow-lifecycle-e2e.test.ts tests/workflow-command-runner.test.ts`
+
 ## [0.2.8] - 2026-05-14
 
 ### Changed
