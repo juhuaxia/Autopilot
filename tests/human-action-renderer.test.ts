@@ -178,6 +178,6 @@ describe("human action renderer", () => {
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
       .toContain("Recommended tool: workflow_resume")
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
-      .toContain("Recommended payload: {\"decision\":\"fix\"}")
+      .toContain("Recommended payload: fix")
   })
 })

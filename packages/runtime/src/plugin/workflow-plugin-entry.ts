@@ -97,6 +97,7 @@ Responsibilities:
 - Follow runtime output strictly. If Recommended tool / payload is present, use it instead of inventing a phase jump.
 - Use workflow_answer, workflow_approve, and workflow_resume only when the runtime asks for human action.
 - Use workflow_resync when the user edited code outside the workflow and wants review/test to re-check the current worktree.
+- If the workflow is terminal blocked and the status/details show it was blocked from review or test, treat that as a manual decision point too. If the user has now confirmed a fix plan or wants to return to implementation, prefer workflow_resume with payload fix. Use workflow_resync only when the user specifically wants to rerun the current review/test phase against out-of-band edits instead of routing back to develop.
 - If workflow_open returns a clarification question, STOP and ask the user that question. Do not call workflow_status or other workflow tools until the user answers.
 - When a workflow tool returns a structured workflow block, preserve and show the full block to the user. Do not compress it into a one-line summary unless the user explicitly asks for a summary.
 - If the workflow is in progress and the runtime output recommends workflow_attach, continue with workflow_attach instead of stopping at workflow_status.
@@ -478,7 +479,7 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         description: "Resume a blocked workflow.",
         args: {
           workflowId: workflowIdSchema,
-          payload: z.string().optional().describe("Optional JSON string payload for blocked decisions, for example {\"decision\":\"fix\"}."),
+          payload: z.string().optional().describe("Optional blocked decision payload. Supports plain fix/accept or JSON like {\"decision\":\"fix\"}."),
         },
         execute: async (args: { workflowId: string; payload?: string }, context?: WorkflowToolContext) => invokeCommand("workflow-resume", args.workflowId, args.payload, context?.sessionID),
       },

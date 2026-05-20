@@ -83,7 +83,7 @@ function exactAction(record: HumanActionRecord): string {
   }
   if (record.action.type === "blocked") {
     if (record.action.allowedDecisions?.includes("fix") || record.action.allowedDecisions?.includes("accept")) {
-      return `Run: bun run src/cli.ts resume ${record.workflowId} '{"decision":"fix"}' or bun run src/cli.ts resync ${record.workflowId}`
+      return `Run: bun run src/cli.ts resume ${record.workflowId} fix or bun run src/cli.ts resync ${record.workflowId}`
     }
     return `Run: bun run src/cli.ts resume ${record.workflowId} or bun run src/cli.ts resync ${record.workflowId}`
   }
@@ -106,7 +106,7 @@ function recommendedTool(record: HumanActionRecord): string {
 function recommendedPayload(record: HumanActionRecord): string | null {
   if (record.action.type === "blocked") {
     if (record.action.allowedDecisions?.includes("fix") || record.action.allowedDecisions?.includes("accept")) {
-      return JSON.stringify({ decision: "fix" })
+      return "fix"
     }
     return null
   }
@@ -119,6 +119,29 @@ function recommendedPayload(record: HumanActionRecord): string | null {
     (record.action.questions ?? []).map((question) => [question.id, question.suggestedAnswer ?? "your answer"]),
   )
   return JSON.stringify(payload)
+}
+
+function blockedWorkflowRecommendation(workflow: WorkflowState, runtime: WorkflowRuntimeState | null): {
+  tool: string
+  payload?: string
+  exactAction: string
+  channelState: string
+} {
+  const blockedFromPhase = runtime?.blockedFromPhase
+  if (workflow.phase === "blocked" && (blockedFromPhase === "review" || blockedFromPhase === "test")) {
+    return {
+      tool: "workflow_resume or workflow_resync",
+      payload: "fix",
+      exactAction: `Run workflow_resume for ${workflow.workflowId} with payload fix to return to develop, or workflow_resync if you specifically want to rerun ${blockedFromPhase} against out-of-band edits.`,
+      channelState: "blocked review/test workflow waiting for manual fix/accept decision or explicit resync",
+    }
+  }
+
+  return {
+    tool: "workflow_status",
+    exactAction: `Re-run workflow_status for ${workflow.workflowId} to inspect the blocked state before choosing the next action.`,
+    channelState: "waiting for external progress or next attach",
+  }
 }
 
 function renderQuestions(record: HumanActionRecord): string[] {
@@ -208,6 +231,19 @@ export function renderHumanActionBlock(args: {
   }
 
   if (!humanAction || humanAction.status === "consumed") {
+    if (workflow.status === "blocked") {
+      const blockedRecommendation = blockedWorkflowRecommendation(workflow, runtime)
+      lines.push("Human action: none")
+      lines.push(`Recommended tool: ${blockedRecommendation.tool}`)
+      if (blockedRecommendation.payload) {
+        lines.push(`Recommended payload: ${blockedRecommendation.payload}`)
+      }
+      lines.push(`Exact action: ${blockedRecommendation.exactAction}`)
+      lines.push(`Channel state: ${blockedRecommendation.channelState}`)
+      lines.push(divider)
+      return lines.join("\n")
+    }
+
     lines.push("Human action: none")
     lines.push(`Recommended tool: ${workflow.status === "completed" ? "workflow_back" : workflow.status === "in_progress" ? "workflow_attach" : "workflow_status"}`)
     lines.push(workflow.status === "completed"

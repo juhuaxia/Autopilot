@@ -590,6 +590,28 @@ ${rawPayload}`
 ${rawPayload}`
 }
 
+function parseBlockedDecisionPayload(payload?: string): "fix" | "accept" | undefined {
+  if (!payload) {
+    return undefined
+  }
+
+  const trimmed = payload.trim()
+  if (trimmed === "fix" || trimmed === "accept") {
+    return trimmed
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { decision?: unknown }
+    if (parsed.decision === "fix" || parsed.decision === "accept") {
+      return parsed.decision
+    }
+  } catch {
+    return undefined
+  }
+
+  return undefined
+}
+
 export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
   async run(args: Parameters<WorkflowCommandRunner["run"]>[0]): Promise<WorkflowCommandResult> {
     const { harness, command, workflowId, payload, foregroundSessionId } = args
@@ -1017,17 +1039,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       await harness.humanActionService.approve(workflowId)
       await harness.attachService.attach(workflowId)
     } else if (command === "workflow-resume") {
-      let resumeDecision: "fix" | "accept" | undefined
-      if (payload) {
-        try {
-          const parsed = JSON.parse(payload) as { decision?: unknown }
-          if (parsed.decision === "fix" || parsed.decision === "accept") {
-            resumeDecision = parsed.decision
-          }
-        } catch {
-          resumeDecision = undefined
-        }
-      }
+      const resumeDecision = parseBlockedDecisionPayload(payload)
       if (foregroundSessionId) {
         await harness.stateStore.updateRuntime(workflowId, {
           preferredForegroundSessionId: foregroundSessionId,

@@ -147,6 +147,7 @@ describe("workflow plugin tool export", () => {
     expect(workflowAgent?.mode).toBe("primary")
     expect(workflowAgent?.tools.workflow_open).toBe(true)
     expect(workflowAgent?.prompt).toContain("workflow execution agent")
+    expect(workflowAgent?.prompt).toContain("prefer workflow_resume with payload fix")
   })
 
   it("syncs workflow progress to host todo client when available", async () => {

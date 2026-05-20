@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-05-20
+
+### Changed
+
+- `workflow_resume` now accepts plain `fix` / `accept` payloads in addition to the older JSON form.
+- Blocked workflow status output and workflow-agent guidance now recommend the simpler `fix` payload when the intended action is to return from blocked review/test to develop.
+
+### Fixed
+
+- Fixed terminal blocked review/test workflows so `workflow_resume` can still record a manual fix decision and route back to `develop` even when no current human-action record is present.
+- Fixed blocked-state guidance that previously over-steered review/test recovery toward `workflow_resync` when the user had already confirmed a repair plan.
+
+### Verification
+
+- `bun test tests/human-action-renderer.test.ts tests/workflow-plugin-tool.test.ts tests/workflow-command-runner.test.ts tests/workflow-engine.test.ts`
+
 ## [0.3.1] - 2026-05-20
 
 ### Added

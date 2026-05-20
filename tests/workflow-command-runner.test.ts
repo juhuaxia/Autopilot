@@ -1183,6 +1183,53 @@ describe("workflow command runner", () => {
     }
   })
 
+  it("surfaces resume-fix guidance for terminal blocked review workflows", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-blocked-review-guidance-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-blocked-review-guidance"
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "验证 blocked review 状态输出会优先提示 resume fix。",
+      })
+      await harness.stateStore.updateWorkflow(workflowId, {
+        phase: "blocked",
+        status: "blocked",
+        blockReason: "Exceeded maxIterations while fixing review issues",
+      })
+      await harness.stateStore.updateRuntime(workflowId, {
+        blockedFromPhase: "review",
+      })
+
+      const statusResult = await runner.run({
+        harness,
+        command: "workflow-status",
+        workflowId,
+      })
+
+      expect(statusResult.output).toContain("Recommended tool: workflow_resume or workflow_resync")
+      expect(statusResult.output).toContain("Recommended payload: fix")
+      expect(statusResult.output).toContain("return to develop")
+
+      const resumeResult = await runner.run({
+        harness,
+        command: "workflow-resume",
+        workflowId,
+        payload: "fix",
+      })
+
+      expect(resumeResult.output).toContain("Phase: develop")
+      expect(["Status: pending", "Status: in_progress"].some((marker) => resumeResult.output.includes(marker))).toBe(true)
+    } finally {
+      await harness.sessionActivityMonitor.stop(workflowId)
+      await rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it("shows plan approval preview and done completion feedback", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-approval-preview-"))
     const harness = await createHarness(baseDir)

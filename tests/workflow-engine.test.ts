@@ -2681,4 +2681,39 @@ describe("workflow harness MVP", () => {
 
     await rm(baseDir, { recursive: true, force: true })
   })
+
+  it("allows terminal blocked review workflows to resume with fix decision back to develop", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-terminal-blocked-review-fix"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 terminal blocked review 也能通过 fix 决策回 develop。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Exceeded maxIterations while fixing review issues",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      recoveryState: "idle",
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(workflow?.phase).toBe("develop")
+    expect(["pending", "in_progress"]).toContain(workflow?.status ?? "missing")
+    expect(workflow?.blockReason).toBeNull()
+    expect(runtime?.pendingBlockedDecision).toBeNull()
+    expect(runtime?.blockedFromPhase).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
 })

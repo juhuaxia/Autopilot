@@ -116,9 +116,12 @@ export class DefaultHumanActionService implements HumanActionService {
       testArtifactRepairDispatchPending: false,
       reviewReadyToConsolidate: false,
       reviewConsolidationDispatched: false,
-      pendingBlockedDecision: current && current.action.type === "blocked" && decision
+      pendingBlockedDecision: decision && (
+        (current && current.action.type === "blocked")
+        || (workflow?.phase === "blocked" && (runtime?.blockedFromPhase === "review" || runtime?.blockedFromPhase === "test"))
+      )
         ? {
-            actionId: current.id,
+            actionId: current?.id ?? `resume:${workflowId}`,
             decision,
             decidedAt: new Date().toISOString(),
           }

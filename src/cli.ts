@@ -11,6 +11,28 @@ import { renderWatchFrame } from "../packages/runtime/src/presentation/watch-ren
 import { DefaultWorkflowWorkspace } from "../packages/runtime/src/workspace/workflow-workspace"
 import { homedir } from "node:os"
 
+function parseBlockedDecisionPayload(payload?: string): "fix" | "accept" | undefined {
+  if (!payload) {
+    return undefined
+  }
+
+  const trimmed = payload.trim()
+  if (trimmed === "fix" || trimmed === "accept") {
+    return trimmed
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { decision?: unknown }
+    if (parsed.decision === "fix" || parsed.decision === "accept") {
+      return parsed.decision
+    }
+  } catch {
+    return undefined
+  }
+
+  return undefined
+}
+
 const WORKFLOW_CHANNEL_COMMANDS = new Set([
   "workflow-open",
   "workflow-attach",
@@ -188,17 +210,7 @@ async function main(): Promise<void> {
   } else if (normalizedCommand === "approve") {
     await harness.humanActionService.approve(workflowId)
   } else if (normalizedCommand === "resume") {
-    let decision: "fix" | "accept" | undefined
-    if (payload) {
-      try {
-        const parsed = JSON.parse(payload) as { decision?: unknown }
-        if (parsed.decision === "fix" || parsed.decision === "accept") {
-          decision = parsed.decision
-        }
-      } catch {
-        decision = undefined
-      }
-    }
+    const decision = parseBlockedDecisionPayload(payload)
     await harness.humanActionService.resume(workflowId, decision)
   } else if (normalizedCommand === "resync") {
     await harness.humanActionService.resync(workflowId)
