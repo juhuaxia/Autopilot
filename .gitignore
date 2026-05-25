@@ -39,3 +39,5 @@ temp/
 *.swp
 *.swo
 *.tgz
+
+docs/
