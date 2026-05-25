@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
 import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize-workflow"
 import { readFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import { writeJsonFile } from "../packages/runtime/src/shared/json-file"
 import { ReviewSidecarManager } from "../packages/runtime/src/review/review-sidecar-manager"
 import { DefaultWorkflowWorkspace } from "../packages/runtime/src/workspace/workflow-workspace"
@@ -126,6 +127,273 @@ describe("workflow harness MVP", () => {
     expect(developSession?.lastPrompt).toContain("[COMPLETION_POLICY]")
 
     await harness.sessionActivityMonitor.stop(workflowId)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("trims oversized source artifacts in dispatch prompts", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-long-plan-prompt"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证超长 plan artifact 会在 develop prompt 中被截断。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：develop prompt 不应注入完整超长 plan artifact。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    const longPlanContent = `${await readFile(harness.workspace.phaseArtifactFile(workflowId, "plan"), "utf8")}\n\n## 附加长文本\n${"A".repeat(9000)}`
+    await writeFile(harness.workspace.phaseArtifactFile(workflowId, "plan"), longPlanContent, "utf8")
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[SOURCE_PLAN_ARTIFACT]")
+    expect(stored?.lastPrompt).toContain("[COMPRESSED] Artifact compressed by key sections for prompt focus.")
+    expect(stored?.lastPrompt).toContain("## 需求摘要")
+    expect(stored?.lastPrompt).toContain("## 实现方案")
+    expect(stored?.lastPrompt).not.toContain("## 附加长文本")
+    expect(stored?.lastPrompt).not.toContain("A".repeat(8500))
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("falls back to truncation when preferred and standard sections are missing", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-missing-sections-fallback"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证缺少结构标题时会回退到截断。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：缺少结构标题时不要输出空压缩结果。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      `无任何标准标题\n\n${"B".repeat(9000)}`,
+      "utf8",
+    )
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[SOURCE_PLAN_ARTIFACT]")
+    expect(stored?.lastPrompt).toContain("[TRUNCATED] Artifact content trimmed for prompt focus.")
+    expect(stored?.lastPrompt).toContain("无任何标准标题")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("keeps meaningful sections even when headings are out of preferred order", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-out-of-order-sections"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证标题乱序时仍能抽取关键 section。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：标题乱序时仍能保留关键内容。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      [
+        "# 开发计划",
+        "",
+        "## 风险评估",
+        "高风险点：菜单入口与路由联动。",
+        "",
+        "## 实现方案",
+        "先加菜单，再加页面，再接入服务。",
+        "",
+        "## 需求摘要",
+        "新增 AI 短剧入口与页面。",
+      ].join("\n"),
+      "utf8",
+    )
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[COMPRESSED] Artifact compressed by key sections for prompt focus.")
+    expect(stored?.lastPrompt).toContain("## 需求摘要")
+    expect(stored?.lastPrompt).toContain("## 实现方案")
+    expect(stored?.lastPrompt).toContain("## 风险评估")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("skips empty preferred sections and still keeps other meaningful sections", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-empty-sections"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证空 section 不会污染压缩结果。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：空 section 会被跳过。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      [
+        "# 开发计划",
+        "",
+        "## 需求摘要",
+        "",
+        "## 实现方案",
+        "实现上传、提交、结果展示。",
+        "",
+        "## 风险评估",
+        "上传文件体积与超时风险。",
+      ].join("\n"),
+      "utf8",
+    )
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("## 实现方案")
+    expect(stored?.lastPrompt).toContain("## 风险评估")
+    expect(stored?.lastPrompt).not.toContain("## 需求摘要\n\n##")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("filters placeholder-only section bodies and falls back to other meaningful sections", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-placeholder-sections"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证占位内容不会被当成有效压缩结果。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：无效占位内容不会进入压缩结果，且有效 section 会被保留。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      [
+        "# 开发计划",
+        "",
+        "## 需求摘要",
+        "待补充",
+        "",
+        "## 影响范围",
+        "TODO",
+        "",
+        "## 核心修改文件",
+        "src/pages/Drama.vue",
+        "",
+        "## 实现方案",
+        "先做 POC 页面，再接 Node 服务。",
+      ].join("\n"),
+      "utf8",
+    )
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("## 核心修改文件")
+    expect(stored?.lastPrompt).toContain("## 实现方案")
+    expect(stored?.lastPrompt).not.toContain("## 需求摘要\n待补充")
+    expect(stored?.lastPrompt).not.toContain("## 影响范围\nTODO")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("falls back to standard sections when preferred sections are all placeholders", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-preferred-placeholder-fallback"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证优先 section 全失效时会扫描其他标准 section。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：优先 section 无效时，仍能抓到其他有效标准 section。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "plan"),
+      [
+        "# 开发计划",
+        "",
+        "## 需求摘要",
+        "待补充",
+        "",
+        "## 影响范围",
+        "TODO",
+        "",
+        "## 核心修改文件",
+        "unknown",
+        "",
+        "## 实现方案",
+        "按照文档内容",
+        "",
+        "## API / Route 变更",
+        "新增 /api/drama/prompt 路由。",
+        "",
+        "## 组件复用决策",
+        "复用现有上传组件样式。",
+      ].join("\n"),
+      "utf8",
+    )
+
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("## API / Route 变更")
+    expect(stored?.lastPrompt).toContain("## 组件复用决策")
+    expect(stored?.lastPrompt).not.toContain("## 需求摘要\n待补充")
 
     await rm(baseDir, { recursive: true, force: true })
   })

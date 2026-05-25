@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import workflowPlugin from "../packages/runtime/src/plugin/workflow-plugin-entry"
@@ -7,33 +7,45 @@ import type { PluginSdkClient } from "../packages/adapters/opencode/src/opencode
 
 describe("workflow plugin tool export", () => {
   it("exposes workflow_channel tool and executes workflow-status-like flow", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-tool-"))
     const plugin = await workflowPlugin({
-      directory: "/tmp/workflow-plugin-tool",
+      directory: dir,
     })
 
     const output = await plugin.tool.workflow_channel.execute({
       command: "workflow-open",
       workflowId: "wf-tool",
-      payload: "新增订单列表页筛选条件。",
+      payload: "请开始实现：新增订单列表页筛选条件。",
     })
 
     expect(plugin.tool.workflow_channel.description).toContain("workflow")
     expect(output).toContain("Workflow: wf-tool")
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("exposes dedicated workflow_open and workflow_status tools", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-tool-2-"))
     const plugin = await workflowPlugin({
-      directory: "/tmp/workflow-plugin-tool-2",
+      directory: dir,
     })
 
     const openOutput = await plugin.tool.workflow_open.execute({
       workflowId: "wf-split",
-      payload: "新增价格排序功能。",
+      payload: "请开始实现：新增价格排序功能。",
     })
-    const statusOutput = await plugin.tool.workflow_status.execute({ workflowId: "wf-split" })
 
-    expect(openOutput).toContain("Workflow: wf-split")
-    expect(statusOutput).toContain("Workflow: wf-split")
+    const workflowRoot = join(dir, ".workflow-harness", "workflows")
+    const workflowIds = (await readdir(workflowRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    const targetWorkflowId = workflowIds.find((id) => id === "wf-split" || id.startsWith("wf-split-"))
+    expect(targetWorkflowId).toBeDefined()
+
+    const statusOutput = await plugin.tool.workflow_status.execute({ workflowId: targetWorkflowId! })
+
+    expect(openOutput).toContain("Workflow:")
+    expect(statusOutput).toContain(`Workflow: ${targetWorkflowId}`)
     expect(typeof plugin.tool.workflow_answer.execute).toBe("function")
     expect(typeof plugin.tool.workflow_approve.execute).toBe("function")
     expect(typeof plugin.tool.workflow_resume.execute).toBe("function")
@@ -42,6 +54,8 @@ describe("workflow plugin tool export", () => {
     expect(typeof plugin.tool.workflow_doctor.execute).toBe("function")
     expect(typeof plugin.tool.workflow_install.execute).toBe("function")
     expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("exposes workflow_doctor and returns diagnostic JSON", async () => {
@@ -96,14 +110,17 @@ describe("workflow plugin tool export", () => {
   })
 
   it("rejects workflow commands with an empty workflowId", async () => {
-    const plugin = await workflowPlugin({ directory: "/tmp/workflow-plugin-empty-id" })
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-empty-id-"))
+    const plugin = await workflowPlugin({ directory: dir })
 
     await expect(plugin.tool.workflow_open.execute({ workflowId: "", payload: "新增空 workflowId 验证。" })).rejects.toThrow("workflowId is required")
     await expect(plugin.tool.workflow_attach.execute({ workflowId: "" })).rejects.toThrow()
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("re-attaches to a workflow after fresh plugin load (session recovery)", async () => {
-    const dir = "/tmp/workflow-plugin-reattach"
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-reattach-"))
 
     const first = await workflowPlugin({ directory: dir })
     await first.tool.workflow_open.execute({ workflowId: "wf-reattach", payload: "新增重新挂载验证。" })
@@ -112,10 +129,12 @@ describe("workflow plugin tool export", () => {
     const result = await second.tool.workflow_attach.execute({ workflowId: "wf-reattach" })
 
     expect(result).toContain("wf-reattach")
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("writes native primary-agent contract artifacts for host integration", async () => {
-    const dir = "/tmp/workflow-plugin-agent-contract"
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-agent-contract-"))
     const plugin = await workflowPlugin({ directory: dir })
 
     const manifest = await readFile(`${dir}/.workflow-harness/workflow-primary-agent.manifest.json`, "utf8")
@@ -126,10 +145,13 @@ describe("workflow plugin tool export", () => {
     expect(manifest).toContain('"workflow_open"')
     expect(prompt).toContain("runtime state machine is the only authority")
     expect(plugin.workflow.primaryAgent.name).toBe("workflow")
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("registers workflow as native primary agent through config hook", async () => {
-    const plugin = await workflowPlugin({ directory: "/tmp/workflow-plugin-native-agent" })
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-native-agent-"))
+    const plugin = await workflowPlugin({ directory: dir })
     const cfg: {
       agent?: Record<string, {
         mode: "primary" | "subagent" | "all"
@@ -148,13 +170,16 @@ describe("workflow plugin tool export", () => {
     expect(workflowAgent?.tools.workflow_open).toBe(true)
     expect(workflowAgent?.prompt).toContain("workflow execution agent")
     expect(workflowAgent?.prompt).toContain("prefer workflow_resume with payload fix")
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("syncs workflow progress to host todo client when available", async () => {
     const created: string[] = []
     const updated: string[] = []
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-host-todo-"))
     const plugin = await workflowPlugin({
-      directory: "/tmp/workflow-plugin-host-todo",
+      directory: dir,
       client: {
         session: {
           create: async () => ({ id: "session-1" }),
@@ -182,12 +207,15 @@ describe("workflow plugin tool export", () => {
     expect(created).toContain("Workflow / Plan")
     expect(created).toContain("Workflow / Develop")
     expect(updated.length).toBe(0)
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("syncs node run todos with node-specific titles", async () => {
     const created: string[] = []
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-node-todo-"))
     const plugin = await workflowPlugin({
-      directory: "/tmp/workflow-plugin-node-todo",
+      directory: dir,
       client: {
         session: {
           create: async () => ({ id: "session-node-1" }),
@@ -209,6 +237,8 @@ describe("workflow plugin tool export", () => {
     await plugin.tool.workflow_open.execute({ workflowId: "wf-node-todo", payload: "请执行 review-heavy 节点任务。" })
 
     expect(created.some((title) => title.startsWith("Review Run /"))).toBe(false)
+
+    await rm(dir, { recursive: true, force: true })
   })
 
   it("prefers host SDK client for workflow execution when available", async () => {

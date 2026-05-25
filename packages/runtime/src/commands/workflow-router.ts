@@ -215,7 +215,7 @@ function isInProgress(workflow: WorkflowState | null | undefined): boolean {
 export function generateDerivedWorkflowId(baseId: string, action: "fork" | "new"): string {
   const timestamp = Date.now().toString(36)
   const suffix = action === "fork" ? `-followup-${timestamp}` : `-${timestamp}`
-  if (baseId.endsWith(suffix) || baseId.includes(`-${action === "fork" ? "followup" : ""}`)) {
+  if (baseId.endsWith(suffix) || (action === "fork" && baseId.includes("-followup-"))) {
     return baseId
   }
   return `${baseId}${suffix}`

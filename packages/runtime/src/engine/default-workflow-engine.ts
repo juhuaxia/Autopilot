@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises"
 import type { Phase } from "../../../core/src/state/phase"
 import { ARTIFACT_REPAIR_REASON_PREFIX } from "../../../core/src/transitions/default-phase-transition"
+import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
 import { getAutopilotPresetDefinition } from "../commands/autopilot-presets"
 import type { ResolvedReviewOrchestration } from "../config/workflow-config"
 import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-registry"
 import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
+import { compressArtifactForPrompt, MAX_CURRENT_ARTIFACT_CHARS, MAX_SOURCE_ARTIFACT_CHARS } from "./prompt-artifact-compression"
 import { readJsonFile } from "../shared/json-file"
 import type { ReviewSidecarEntry, ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
@@ -79,7 +81,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
     lines.push(`[ARTIFACT_PATH] ${args.artifactPath}`)
     if (args.currentContent) {
       lines.push("[CURRENT_ARTIFACT]")
-      lines.push(args.currentContent)
+      lines.push(compressArtifactForPrompt(args.currentContent, args.phase, MAX_CURRENT_ARTIFACT_CHARS))
     }
 
     return lines
@@ -219,7 +221,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       try {
         const refinementContent = await readFile(this.deps.workspace.phaseArtifactFile(workflowId, "spec_refinement"), "utf8")
         lines.push("[SOURCE_REFINEMENT_ARTIFACT]")
-        lines.push(refinementContent)
+        lines.push(compressArtifactForPrompt(refinementContent, "spec_refinement", MAX_SOURCE_ARTIFACT_CHARS))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (!message.includes("ENOENT")) {
@@ -232,7 +234,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       try {
         const planContent = await readFile(this.deps.workspace.phaseArtifactFile(workflowId, "plan"), "utf8")
         lines.push("[SOURCE_PLAN_ARTIFACT]")
-        lines.push(planContent)
+        lines.push(compressArtifactForPrompt(planContent, "plan", MAX_SOURCE_ARTIFACT_CHARS))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (!message.includes("ENOENT")) {
@@ -245,7 +247,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       try {
         const developContent = await readFile(this.deps.workspace.phaseArtifactFile(workflowId, "develop"), "utf8")
         lines.push("[SOURCE_DEVELOP_ARTIFACT]")
-        lines.push(developContent)
+        lines.push(compressArtifactForPrompt(developContent, "develop", MAX_SOURCE_ARTIFACT_CHARS))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (!message.includes("ENOENT")) {
@@ -258,7 +260,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       try {
         const reviewContent = await readFile(this.deps.workspace.phaseArtifactFile(workflowId, "review"), "utf8")
         lines.push("[SOURCE_REVIEW_ARTIFACT]")
-        lines.push(reviewContent)
+        lines.push(compressArtifactForPrompt(reviewContent, "review", MAX_SOURCE_ARTIFACT_CHARS))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (!message.includes("ENOENT")) {
@@ -425,7 +427,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
 
     if (currentContent) {
       lines.push("[CURRENT_ARTIFACT]")
-      lines.push(currentContent)
+      lines.push(compressArtifactForPrompt(currentContent, phase, MAX_CURRENT_ARTIFACT_CHARS))
     }
 
     return lines.join("\n\n")

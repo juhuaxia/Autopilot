@@ -174,7 +174,9 @@ describe("human action renderer", () => {
     }
 
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: approvalAction }))
-      .toContain("Recommended tool: workflow_approve")
+      .toContain("Recommended user action: confirm approval")
+    expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: approvalAction }))
+      .toContain("Explicit user confirmation required before approval.")
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
       .toContain("Recommended tool: workflow_resume")
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))

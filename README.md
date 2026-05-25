@@ -1,44 +1,31 @@
 # Autopilot
 
-**Turn a natural-language request into a structured, reviewable delivery workflow — automatically.**
+Turn a natural-language coding request into a staged workflow you can inspect, answer, approve, and recover.
 
 [中文说明](./GUIDE.zh-CN.md)
 
 ---
 
-## What is Autopilot?
+## What Autopilot does
 
-Autopilot is a plugin for [OpenCode](https://github.com/opencode-ai/opencode) that acts as an **AI project manager** for your coding requests.
+Autopilot runs your request through these stages:
 
-Instead of throwing a requirement at AI and hoping for the best, Autopilot breaks every request into **5 controlled stages**:
-
-```
-Your request → Refine → Plan → Build → Review → Test → Done
-                 ↑ ask    ↑ approve   ↑ auto    ↑ check   ↑ verify
+```text
+Request -> Spec refinement -> Plan -> Develop -> Review -> Test -> Done
 ```
 
-Each stage produces a document you can read, approve, or correct before moving forward. You stay in control; AI does the heavy lifting.
+At each step, it can:
 
-## Why use Autopilot?
+- ask you clarification questions
+- ask you to approve the plan
+- pause when review/test needs your decision
+- let you continue, resync, or start a new workflow
 
-| Without Autopilot | With Autopilot |
-|---|---|
-| One-shot generation, unpredictable output | Staged pipeline, visible at every step |
-| AI guesses your intent and starts coding | Ambiguity is resolved **before** code is written |
-| Large code dumps are hard to review | Each stage has its own artifact you can inspect |
-| Regression risks are left to memory | Impact scope and risk signals are tracked explicitly |
-| Every session follows different patterns | Skills inject consistent team conventions |
+The goal is simple: less one-shot guessing, more visible control.
 
-**Who is this for?**
-- Developers who want AI-assisted coding with quality guardrails
-- Teams that need consistent patterns across AI-generated code
-- Anyone who's experienced "AI wrote 500 lines and half of them are wrong"
+## Install
 
-## Quick Start (3 steps)
-
-### 1. Install the plugin
-
-Add this to your OpenCode configuration (`opencode.json`):
+Add the plugin to your OpenCode config:
 
 ```json
 {
@@ -46,445 +33,256 @@ Add this to your OpenCode configuration (`opencode.json`):
 }
 ```
 
-Restart OpenCode. You should see:
+Restart OpenCode.
 
-```
-[autopilot] Autopilot plugin loaded (... commands)
-```
+## Quick start
 
-### 2. Start your first workflow
-
-Just type your request in natural language. For example:
-
-> Add sorting to the product list page and make sure regression risks are reviewed.
-
-Autopilot will take over from there, guiding you through each stage.
-
-### 3. Follow along
-
-Autopilot will prompt you at key moments:
-
-- **Refinement stage**: It may ask clarifying questions about your request. Answer them to move forward.
-- **Plan stage**: It shows you the implementation plan. Approve it when ready.
-- **Build / Review / Test**: These run mostly automatically. You'll see results at each stage.
-
-You typically only need **3–5 interactions** per request — mostly answering questions or clicking approve.
-
-## How the workflow works
-
-| Stage | What happens | What you do |
-|---|---|---|
-| **Refine** | Analyzes your request, fills in gaps, asks questions if something is unclear | Answer clarification questions (or let it infer) |
-| **Plan** | Creates a step-by-step implementation plan with file list, risks, and acceptance criteria | Review and approve the plan |
-| **Build** | Writes code according to the approved plan | Monitor progress (automatic) |
-| **Review** | Checks code quality, consistency, and regression risks | Review findings, decide if fixes needed |
-| **Test** | Runs verification and reports pass/fail with evidence | Check test results |
-
-If Review finds issues, the workflow loops back to Build automatically (up to 3 times). If Test fails, it pauses for your decision.
-
-If a develop/review/test session appears to finish but the current phase artifact is still unchanged from its template, Autopilot performs one extra **artifact-only repair** dispatch before escalating to human action. That dispatch is limited to updating the artifact only — it must not continue modifying application code.
-
-## Chat-style Autopilot directives
-
-Autopilot supports a small set of private inline directives inside normal chat input. These are parsed by Autopilot itself; they are **not** OpenCode host slash commands.
-
-Supported directives:
+Just describe what you want:
 
 ```text
+Add sorting to the product list page and review regression risk.
+```
+
+Or start with a requirement doc:
+
+```text
+Please start workflow for this request.
 /ap-doc: docs/requirement.md
-/ap-mode: light
-/ap-mode: standard
 /ap-mode: safe
-/ap-start-at: develop
 ```
 
-Examples:
+## Copy-paste examples
+
+### 1. Start a normal workflow
 
 ```text
-1. Update the product list copy
-2. Change the primary button color
+Add sorting to the product list page and review regression risk.
+```
+
+### 2. Start from a requirement document
+
+```text
+Please start workflow for this request.
 /ap-doc: docs/requirement.md
+/ap-mode: safe
+```
+
+### 3. Start direct-develop for a small clear change
+
+```text
+Update the button copy on the checkout page.
 /ap-start-at: develop
 ```
 
-```text
-/ap-doc: local_docs/figma_md/page.md
-```
-
-Rules:
-
-- `/ap-doc:` adds an explicit workflow reference document and reads it into the workflow-open request.
-- `/ap-mode:` records a workflow preset so chat input can align with the same mode semantics exposed by public slash commands.
-- `/ap-start-at: develop` explicitly skips refinement and plan, then starts a new workflow directly in `develop`.
-- These directives must be written as standalone lines.
-- Plain prose like `startAt: develop` is treated as normal text and is **not** interpreted as a control directive.
-- A direct-develop workflow still keeps review/test guardrails and records that refinement/plan were skipped.
-
-## Public slash commands
-
-Autopilot also registers discoverable OpenCode slash commands so users can see available workflow modes while typing `/a` in the chat box.
-
-Available commands:
-
-- `/ap-light`: full workflow mode; routes to the `workflow` agent and expands to preset `light` plus direct-develop start
-- `/ap-standard`: full workflow mode; routes to the `workflow` agent and expands to preset `standard`
-- `/ap-safe`: full workflow mode; routes to the `workflow` agent and expands to preset `safe`
-- `/ap-debug`: full workflow mode; routes to the `workflow` agent and expands to preset `debug`
-- `/ap-review-heavy`: node review mode; on completed workflow context it creates a review node run, otherwise it expands to preset `review-heavy`
-- `/ap-develop`: node develop mode; creates a develop node run against an existing workflow context
-- `/ap-verify`: node verify mode; creates a verify node run against an existing workflow context
-
-These commands are thin entrypoints. They autocomplete in OpenCode, run on the `workflow` agent, and expand into Autopilot directive lines that the workflow runtime parses reliably.
-
-Current preset / node behavior:
-
-- `light`: direct-develop path for small clear tasks
-- `standard`: default phase order with balanced review/test guidance
-- `safe`: default phase order with stricter review/test guidance and deeper understanding during review/test
-- `debug`: default phase order with reproduce/isolate/fix/verify guidance for bug work
-- `review-heavy`: default phase order with extra review scrutiny and regression discovery bias
-- `verify`: default phase order with validation-first guidance and concise review
-- `review-heavy` node runs: `review -> done`
-- `develop` node runs: `develop -> done`
-- `verify` node runs: `test -> done`
-
-Node run metadata:
-
-- `runKind`: `full`, `review-heavy`, `develop`, or `verify`
-- `parentWorkflowId`: the immediate parent workflow/run
-- `sourceWorkflowId`: the original root workflow that supplied the artifacts
-
-Node runs are intended for follow-up review, test, develop, or verify work on top of an existing completed workflow. They reuse the source workflow artifacts for context, but they do not overwrite the original workflow history.
-
-See `docs/ap-command-presets.md` for the recorded preset design and `docs/review-orchestration-overview.md` for the end-to-end review orchestration and consolidation flow.
-
-## Workflow recovery
-
-When you change code outside the workflow while it is paused in `review` or `test`, use `workflow_resync` to realign workflow state with the current worktree.
-
-Behavior:
-
-- `workflow_resync` is a dedicated recovery command/tool.
-- It currently supports workflows paused in `review` or `test` only.
-- It resets the current phase artifact to a fresh rerun baseline and re-dispatches that same phase.
-- The default behavior is to rerun the current phase, not to continue from the old conclusion.
-
-Example recovery flow:
+### 4. Resume a blocked review/test workflow and go back to develop
 
 ```text
-1. Workflow pauses in review or test.
-2. You manually fix code outside the workflow.
-3. Re-attach or inspect status if needed.
-4. Run workflow_resync for the same workflowId.
-5. Autopilot rebuilds the current phase baseline and reruns that phase.
+workflow_resume
+payload: fix
 ```
 
-Typical use:
+### 5. Rerun review/test after manual out-of-band edits
 
 ```text
 workflow_status -> workflow_resync -> workflow_attach
 ```
 
-## Configuration
+## What you will usually do
 
-Autopilot creates/uses two configuration files:
+### 1. Answer clarification questions
 
-| Scope | Path | Purpose |
-|---|---|---|
-| Global (all projects) | `~/.config/opencode/autopilot.json` | Your personal defaults |
-| Project-specific | `<your-project>/.workflow-harness/autopilot.json` | Per-project overrides |
+If refinement cannot safely infer something, Autopilot will ask.
 
-When both exist, they **merge** — project settings are added on top of global ones. If neither file exists, Autopilot creates `autopilot.json` with sensible defaults on first run. **You don't need to configure anything to get started.**
+Typical example:
 
-### Explicit `@read(...)` sources
+- acceptance criteria
+- scope boundary
+- whether to continue current work or start a new one
 
-Autopilot supports explicit read targets inside workflow-open requests.
+### 2. Approve the plan
 
-Examples:
+Plan approval is a **human confirmation point**.
+
+Autopilot should show you the full approval block first. You should explicitly confirm before `workflow_approve` is used.
+
+### 3. Read review/test results
+
+If review or test finds issues, the workflow may:
+
+- loop back to develop automatically
+- pause and wait for your decision
+
+## Inline directives you can use in chat
+
+These are **not** OpenCode slash commands. They are inline directives parsed by Autopilot inside normal chat messages.
+
+### `/ap-doc:`
+
+Marks a document as an explicit input source for this workflow.
 
 ```text
-Please use @read(docs/acceptance.md) for the acceptance criteria.
-Add the content from @read(local_docs/figma_md/17786586547155.png) under the "video generate" section.
+/ap-doc: docs/requirement.md
 ```
 
-Rules:
+Use this when you want Autopilot to treat a specific document as the request source instead of guessing.
 
-- `@read(...)` is only consumed during **refinement** and **plan**.
-- Plain file paths without `@read(...)` are **not** automatically read.
-- Text targets (`.md`, `.txt`, `.rst`, `.adoc`) are read directly and injected into the workflow input.
-- Image targets (`.png`, `.jpg`, `.jpeg`, `.webp`) go through the image summary service.
+### `/ap-mode:`
 
-### Image summary service behavior
+Sets the workflow mode.
 
-Image `@read(...)` targets only produce summaries when an OpenAI-compatible vision service is configured through environment variables:
-
-```bash
-export AUTOPILOT_IMAGE_SUMMARY_BASE_URL="https://your-openai-compatible-endpoint"
-export AUTOPILOT_IMAGE_SUMMARY_API_KEY="your-api-key"
-export AUTOPILOT_IMAGE_SUMMARY_MODEL="your-vision-model"
+```text
+/ap-mode: light
+/ap-mode: standard
+/ap-mode: safe
+/ap-mode: debug
 ```
 
-When configured:
+### `/ap-start-at: develop`
 
-- Autopilot reads at most **5** explicit image targets per request
-- processes them with concurrency **2**
-- uses a per-image timeout of **5 minutes**
-- injects `READ_TARGET_IMAGE_SUMMARY` blocks into refinement/plan input
+Skips refinement and plan, then starts directly in `develop`.
 
-When not configured:
-
-- Autopilot falls back to `NoopImageSummaryService`
-- injects `READ_TARGET_IMAGE_ERROR` instead of a summary
-- does **not** block the workflow
-- does **not** invent image content
-
-### The autopilot.json file
-
-Here's what a complete configuration looks like, with explanations inline:
-
-```jsonc
-{
-  // ---- Skill directories ----
-  // These folders are scanned for skill files (.md files or directories containing SKILL.md).
-  // Use "~" for your home directory. Non-existent paths are silently skipped.
-  "skillRoots": [
-    "~/.claude/skills",
-    "~/.config/opencode/skills"
-  ],
-
-  // ---- Stage settings ----
-  // Each stage can have:
-  //   requiredSkills: which skills to load during this stage
-  //   understandingDepth: how deeply AI should analyze your codebase (lightweight / standard / deep)
-  "phases": {
-    "refinement": {
-      "requiredSkills": [],
-      "understandingDepth": "lightweight"
-    },
-    "plan": {
-      "requiredSkills": [],
-      "understandingDepth": "standard"
-    },
-    "develop": {
-      "requiredSkills": [],
-      "understandingDepth": "deep"
-    },
-    "review": {
-      "requiredSkills": [],
-      "understandingDepth": "deep"
-    },
-    "test": {
-      "requiredSkills": [],
-      "understandingDepth": "standard"
-    }
-  },
-
-  // ---- Risk signals ----
-  // When these patterns are detected in your request, understanding depth is
-  // automatically upgraded. Signals with "triggersDeep: true" force deep mode.
-  "riskSignals": [
-    { "id": "cross_module", "description": "Change spans multiple modules or packages", "triggersDeep": true },
-    { "id": "public_component", "description": "Change affects shared components used by other features", "triggersDeep": true },
-    { "id": "state_route_permission", "description": "Change touches state management, routing, or permissions" },
-    { "id": "dependency_chain", "description": "Requires tracing parent components or import chains" },
-    { "id": "history_complexity", "description": "Area has history of complexity, bugs, or regressions", "triggersDeep": true }
-  ]
-}
+```text
+/ap-start-at: develop
 ```
 
-### Understanding depth — what do the levels mean?
+Use this only when the task is already clear enough and you intentionally want a direct-develop path.
 
-| Depth | Behavior | When it's used by default |
-|---|---|---|
-| **lightweight** | Extracts core intent only. No deep dependency tracing unless ambiguity is detected. Keeps analysis fast and focused. | Refinement stage — you're still defining *what* to build |
-| **standard** | Traces direct dependencies, parent components, and immediate impact scope. Good balance of thoroughness and speed. | Plan & Test stages — enough context to plan and verify |
-| **deep** | Comprehensive tracing: parent components, routes, stores, services, shared modules, API contracts, state flow, cross-module impacts. Full picture before touching code. | Build & Review stages — maximum safety when writing/changing code |
+## Public slash commands
 
-> The depth can be **auto-upgraded**: if your request triggers a risk signal (e.g., "cross_module"), even a lightweight stage gets bumped up. This means simple requests stay fast, complex requests get thorough treatment — automatically.
+These **do** appear in OpenCode command completion:
 
-### What are Skills?
+- `/ap-light`
+- `/ap-standard`
+- `/ap-safe`
+- `/ap-debug`
+- `/ap-review-heavy`
+- `/ap-develop`
+- `/ap-verify`
 
-A **Skill** is a Markdown file that contains guidelines, rules, or reference material you want AI to follow during a specific workflow stage.
+Use them when you want a discoverable command entrypoint.
 
-Think of it as a **memo for AI** — like "always use our Button component," "follow these naming conventions," or "run Playwright tests for UI changes."
+## Workflow recovery
 
-#### Where to put skill files
+### When to use `workflow_resume`
 
-Skills live in directories listed under `skillRoots`. Two formats are supported:
+Use `workflow_resume` when a workflow is blocked and you want it to continue.
 
-| Format | Example | Use when |
-|---|---|---|
-| Single file | `~/.config/opencode/skills/my-rule.md` | Short guidelines, one file is enough |
-| Folder + SKILL.md | `~/.config/opencode/skills/playwright/SKILL.md` | Longer skills with accompanying reference files |
+For blocked review/test cases, plain payloads are supported:
 
-The **filename** (without `.md`) becomes the skill name. For the folder format, the **folder name** is used.
+- `fix`
+- `accept`
 
-#### Creating your first skill
+Typical meaning:
 
-Let's say you want AI to follow your team's frontend conventions during the build stage:
+- `fix`: return to develop and fix the problem
+- `accept`: accept the current state and continue/finish if allowed
 
-**Step 1:** Create the skill directory (if it doesn't exist):
+### When to use `workflow_resync`
 
-```bash
-mkdir -p ~/.config/opencode/skills
+Use `workflow_resync` when:
+
+- the workflow is paused in `review` or `test`
+- you changed code outside the workflow
+- you want the current phase rerun against the latest worktree
+
+Typical sequence:
+
+```text
+workflow_status -> workflow_resync -> workflow_attach
 ```
 
-**Step 2:** Create a skill file:
+## Task relationship confirmations
 
-```markdown
-# Frontend Design Rules
+Sometimes Autopilot cannot tell whether your new message means:
 
-## Component usage
-- Always use existing components from src/components/ before creating new ones.
-- Import Button from "@/components/Button/Button.tsx".
-- Import Table from "@/components/Table/Table.tsx".
+1. continue the current workflow
+2. create a new independent workflow
+3. create a follow-up workflow from the current one
 
-## Styling
-- Use Tailwind CSS utility classes. Do not create new CSS files.
-- Follow the existing design tokens in src/styles/tokens.ts.
+When that happens, it pauses and asks you to choose.
 
-## Accessibility
-- All interactive elements must have aria-label.
-- Support keyboard navigation for all custom components.
+This confirmation is now persisted, so a later `workflow_answer` can continue reliably.
+
+## FAQ
+
+### Q: I typed `/ap-doc` and did not see OpenCode command suggestions. Is it broken?
+
+No.
+
+`/ap-doc:` is an Autopilot inline directive, not an OpenCode slash command.
+
+Use it directly in message text like this:
+
+```text
+Please start workflow.
+/ap-doc: docs/requirement.md
 ```
 
-Save this as `~/.config/opencode/skills/frontend-design.md`.
+### Q: What does `/ap-doc:` actually do?
 
-**Step 3:** Enable it in your config:
+It tells Autopilot that a specific document path is an explicit workflow input source.
 
-```json
-{
-  "phases": {
-    "develop": {
-      "requiredSkills": ["frontend-design"]
-    }
-  }
-}
-```
+It does not create a host command. It does not appear in slash-command completion.
 
-From now on, every time the workflow reaches the **Build** stage, AI receives your design rules as context and follows them while writing code.
+### Q: Autopilot asked whether to continue the current task or create a new one. What should I choose?
 
-#### Practical skill examples
+- Choose **continue current workflow** if you are still working on the same delivery round.
+- Choose **new independent workflow** if this is a separate request.
+- Choose **follow-up workflow** if it is the same topic but a new round/extension.
 
-| Skill name | Best for stage | What it does |
-|---|---|---|
-| `frontend-design` | develop | Inject component library and styling conventions |
-| `code-review-checklist` | review | Ensures consistent review criteria across sessions |
-| `playwright` | test | Guides AI to write browser-based E2E tests |
-| `clarity-guide` | refinement | Encourages AI to resolve ambiguity early |
-| `i18n-rules` | develop | Enforces internationalization patterns |
+### Q: I replied with a choice number before, and the workflow got stuck. What should happen now?
 
-#### What if a skill is missing?
+Autopilot now persists these task-relationship confirmations and accepts payloads such as:
 
-If you reference a skill name in `requiredSkills` but the file doesn't exist in any `skillRoots`, Autopilot notes it as `[MISSING_SKILLS]` in the workflow prompt but **continues running normally**. It won't break your workflow.
+- `{"choice": 1}`
+- `{"choice": 2}`
+- `{"intentChoice": 2, "intentText": "创建新的独立任务"}`
 
-## Updating Autopilot
+So the decision should continue reliably instead of asking the same question forever.
 
-There are two supported update entrypoints:
+### Q: What is the difference between `workflow_resume` and `workflow_resync`?
 
-### Option 1: CLI update
+- `workflow_resume`: continue a blocked workflow decision
+- `workflow_resync`: rerun review/test after out-of-band code edits
 
-Use this when you want to refresh the installed plugin outside the OpenCode chat flow:
+### Q: What does `workflow_resume fix` do?
 
-```bash
-bun run src/cli.ts update
-```
+It tells Autopilot to return from a blocked review/test situation back to `develop` so the issue can be fixed.
 
-Alias also supported:
+### Q: What does `workflow_resume accept` do?
 
-```bash
-bun run src/cli.ts autopilot-update
-```
+It records that you accept the current blocked state and want the workflow to continue or finish if allowed by the phase logic.
 
-### Option 2: OpenCode tool update
+### Q: Why did Autopilot not go straight into a brand-new workflow?
 
-Inside OpenCode, use the standalone maintenance tool `autopilot_update`.
+Because your message may have looked like a continuation of an existing workflow. Autopilot now prefers asking instead of guessing.
 
-- It is **not** a `workflow_*` command.
-- It is **not** part of `workflow_channel`.
-- It does **not** enter any workflow lifecycle or workflow state machine.
+### Q: Why did plan approval not auto-run?
 
-If you are chatting with an agent, asking it to **call `autopilot_update`** is more reliable than only sending the literal text `autopilot_update`.
+Because plan approval is a human confirmation point. The expected behavior is:
 
-### What the updater does
+1. show the full approval block
+2. wait for your explicit confirmation
+3. only then use `workflow_approve`
 
-- **Local source install (`file://<repo>/dist/plugin.js`)**: checks the repo version and only rebuilds when it is behind the latest release.
-- **Release file install (`file://~/.config/opencode/plugins/autopilot/plugin.js`)**: downloads the latest GitHub release bundle and replaces the installed plugin safely.
-- **npm package install (`@fkqfkq123/opencode-autopilot`)**: reports the installed package version and tells you to run `npm update @fkqfkq123/opencode-autopilot` when needed.
+### Q: Will long artifacts blow up later prompts?
 
-### After updating
+Autopilot now compresses injected artifacts by key markdown sections before falling back to truncation. This is rule-based compression, not a second AI summarization pass.
 
-- After any real update, restart OpenCode so its in-memory plugin cache reloads the new plugin code.
-- If the updater reports that you are already current, no restart is required.
+### Q: What if an artifact has missing headings, empty sections, or placeholder content?
 
-## Publishing to npm
+Autopilot now handles these more defensively during prompt compression:
 
-This package is configured for public scoped publishing.
+- skips empty sections
+- filters placeholder-only sections
+- falls back to broader section scanning
+- falls back to truncation if no useful structure is found
 
-### Local pre-publish verification
+## For project-specific tuning
 
-```bash
-bun run typecheck
-bun test
-bun run build
-npm pack --dry-run
-```
+Autopilot still supports project/global config in:
 
-### Manual publish
+- `~/.config/opencode/autopilot.json`
+- `<project>/.workflow-harness/autopilot.json`
 
-```bash
-npm publish --access public
-```
-
-### GitHub Actions release publish
-
-Tagging `v*` runs `.github/workflows/release.yml`, which:
-
-- typechecks
-- builds
-- runs smoke tests
-- uploads the GitHub release tarball
-- publishes to npm when `NPM_TOKEN` is configured in repository secrets
-
-Important: keep the GitHub Release version aligned with the npm package version. If npm is published to a newer version but the latest GitHub Release is still older, file/release installs will see outdated latest-version information.
-
-### Remaining requirement
-
-Before calling the package fully public-ready, add an explicit open-source license choice to both:
-
-- `package.json` → `license`
-- repo root → `LICENSE`
-
-Without those, npm will still treat the package as proprietary metadata-wise.
-
-## Troubleshooting
-
-### OpenCode won't start after adding the plugin
-
-Temporarily remove the plugin line from `opencode.json`, restart OpenCode, then re-add it after checking for typos.
-
-### Workflow seems stuck or broken
-
-Delete the runtime folder and start fresh:
-
-```bash
-rm -rf .workflow-harness
-```
-
-Then re-run your request.
-
-### Plugin loads but commands aren't available
-
-Make sure your OpenCode version supports plugin commands. Try updating both OpenCode and the plugin:
-
-```bash
-npm update @fkqfkq123/opencode-autopilot
-```
-
-## Fallback install
-
-If you prefer installing from source instead of npm:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/juhuaxia/Autopilot/main/install.sh | bash
-```
+But if you are just using the plugin, you can ignore config and start with the defaults.

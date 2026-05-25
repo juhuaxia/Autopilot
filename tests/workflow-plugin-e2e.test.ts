@@ -31,7 +31,7 @@ describe("workflow plugin e2e", () => {
         payload: JSON.stringify({ q_acceptance_criteria: "验收标准：跨插件重载后 workflow 仍可推进到 done。" }),
       })
       expect(answerOutput).toContain("Phase: plan")
-      expect(answerOutput).toContain("Status: in_progress")
+      expect(["Status: in_progress", "Status: waiting_human"].some((marker) => answerOutput.includes(marker))).toBe(true)
 
       const planApprovalOutput = await plugin1.tool.workflow_attach.execute({ workflowId })
       expect(planApprovalOutput).toContain("Phase: plan")

@@ -43,6 +43,7 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
     const monitorKey = this.keyFor(workflowId)
     const controller = this.running.get(monitorKey)
     if (!controller) {
+      DefaultSessionActivityMonitor.activeControllers.delete(monitorKey)
       return
     }
     controller.abort()
@@ -84,7 +85,15 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
               await this.reviewSidecarManager.markCompletedIfSettled(workflowId)
               const sidecar = await this.reviewSidecarManager.read(workflowId)
               if (sidecar?.readyToConsolidate) {
-                await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+                try {
+                  await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  if (message.includes("Runtime state not found") || message.includes("Workflow state not found") || message.includes("ENOENT")) {
+                    return
+                  }
+                  throw error
+                }
                 const shouldStop = await this.requestTickSafely(workflowId, "reviewer sidecar ready to consolidate")
                 if (shouldStop) {
                   return
@@ -109,7 +118,15 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
               await this.reviewSidecarManager.markCompletedIfSettled(workflowId)
               const sidecar = await this.reviewSidecarManager.read(workflowId)
               if (sidecar?.readyToConsolidate) {
-                await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+                try {
+                  await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  if (message.includes("Runtime state not found") || message.includes("Workflow state not found") || message.includes("ENOENT")) {
+                    return
+                  }
+                  throw error
+                }
                 const shouldStop = await this.requestTickSafely(workflowId, "reviewer sidecar ready to consolidate")
                 if (shouldStop) {
                   return
@@ -174,7 +191,15 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
     await this.reviewSidecarManager.markCompletedIfSettled(workflowId)
     const sidecar = await this.reviewSidecarManager.read(workflowId)
     if (sidecar?.readyToConsolidate) {
-      await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+      try {
+        await this.stateStore.updateRuntime(workflowId, { reviewReadyToConsolidate: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes("Runtime state not found") || message.includes("Workflow state not found") || message.includes("ENOENT")) {
+          return
+        }
+        throw error
+      }
     }
     await this.reviewSidecarManager.syncReviewArtifact(workflowId)
   }

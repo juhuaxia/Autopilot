@@ -648,7 +648,8 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       const activeWorkflowCandidates = workflows.filter(isActiveWorkflow)
       const activeWorkflows: WorkflowState[] = []
       for (const wf of activeWorkflowCandidates) {
-        if (!(await isIgnoredForRouting(harness, wf.workflowId))) {
+        const runtime = await harness.stateStore.getRuntime(wf.workflowId)
+        if (runtime && !(await isIgnoredForRouting(harness, wf.workflowId))) {
           activeWorkflows.push(wf)
         }
       }
@@ -826,6 +827,15 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             }
           }
           const targetId = routingDecision.targetWorkflowId ?? workflowId
+          const targetRuntime = await harness.stateStore.getRuntime(targetId)
+          if (!targetRuntime) {
+            return {
+              ok: true,
+              output: formatRoutingOutput({ action: "confirm", reason: "continue-target-missing-runtime-state" }),
+              events: [],
+              workflowId,
+            }
+          }
           if (foregroundSessionId) {
             await harness.stateStore.updateRuntime(targetId, {
               preferredForegroundSessionId: foregroundSessionId,
@@ -901,6 +911,19 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               workflowId: activeId,
             }
           }
+
+          await savePendingClarification(harness, workflowId, {
+            rawPayload: payload ?? "",
+            prompt: "这可能是继续当前任务，也可能是新任务。",
+            options: [
+              "1. 继续当前任务",
+              "2. 创建新的独立任务",
+              "3. 从当前任务派生后续任务",
+            ],
+            sourceWorkflowId: primaryWorkflow?.workflowId ?? workflowId,
+            ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+          })
+
           return {
             ok: true,
             output: formatRoutingOutput(routingDecision),
@@ -935,7 +958,12 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       }
 
       if (answers) {
-        const lifecycleDecision = answers.lifecycle_decision ?? answers.answer
+        const lifecycleDecisionRaw = answers.lifecycle_decision ?? answers.answer ?? answers.choice ?? answers.intentChoice
+        const lifecycleDecision = typeof lifecycleDecisionRaw === "string"
+          ? lifecycleDecisionRaw
+          : typeof lifecycleDecisionRaw === "number"
+            ? String(lifecycleDecisionRaw)
+            : undefined
         if (lifecycleDecision === "resume" || lifecycleDecision === "1") {
           // User chose to resume active workflow
           const pending = await readPendingClarification(harness, workflowId)
@@ -965,12 +993,13 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           }
           // Fallback: no active workflow found, treat as normal answer
           await harness.humanActionService.answer(workflowId, answers)
+          await harness.attachService.attach(workflowId)
         } else if (lifecycleDecision === "new" || lifecycleDecision === "2") {
           // User chose to start fresh — keep old workflow untouched and create new
           const pending = await readPendingClarification(harness, workflowId)
           await clearPendingClarification(harness, workflowId)
           const sourceWorkflowId = pending?.sourceWorkflowId ?? workflowId
-          if (sourceWorkflowId) {
+          if (sourceWorkflowId && await harness.stateStore.getRuntime(sourceWorkflowId)) {
             await harness.stateStore.updateRuntime(sourceWorkflowId, {
               ignoredForRoutingAt: new Date().toISOString(),
             })
@@ -985,7 +1014,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               originalPrompt = undefined
             }
           }
-          const targetId = resolvePresetWorkflowTargetId(workflowId)
+          const targetId = await harness.stateStore.getWorkflow(workflowId)
+            ? resolvePresetWorkflowTargetId(workflowId)
+            : generateDerivedWorkflowId(workflowId, "new")
           await initializeWorkflow({
             workflowId: targetId,
             stateStore: harness.stateStore,
@@ -1009,6 +1040,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           })
         } else {
           await harness.humanActionService.answer(workflowId, answers)
+          await harness.attachService.attach(workflowId)
         }
       } else {
         const pending = await readPendingClarification(harness, workflowId)

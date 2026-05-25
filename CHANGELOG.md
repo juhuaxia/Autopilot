@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3] - 2026-05-21
+
+### Added
+
+- Added explicit approval guidance in human-action rendering so approval blocks now state that explicit user confirmation is required before `workflow_approve` should be used.
+- Added standalone prompt-artifact compression tests covering structured compression, placeholder filtering, fallback truncation, and malformed heading edge cases.
+
+### Changed
+
+- Prompt artifact injection for `SOURCE_*_ARTIFACT` and `CURRENT_ARTIFACT` now uses structure-aware section compression before falling back to truncation, reducing prompt size while preserving key phase meaning.
+- Approval recommendations now render as user-decision guidance (`confirm approval`) instead of directly recommending `workflow_approve` as the next automatic tool action.
+- Primary workflow-agent guidance now explicitly requires showing the full approval block and waiting for explicit user confirmation before calling `workflow_approve`.
+
+### Fixed
+
+- Fixed ambiguous lifecycle confirmation flows so router-level `confirm` decisions persist clarification state and can be continued reliably via `workflow_answer`.
+- Fixed `workflow_answer` lifecycle parsing so clarification payloads using `choice` / `intentChoice` are accepted in addition to older fields.
+- Fixed new independent workflow creation after clarification so derived workflow IDs are generated correctly even when the base workflow ID already contains hyphens.
+- Fixed prompt compression edge cases for missing headings, out-of-order headings, empty sections, placeholder-only sections, and unknown trailing headings leaking into preserved sections.
+
+### Verification
+
+- `bun test tests/prompt-artifact-compression.test.ts tests/human-action-renderer.test.ts tests/workflow-command-runner.test.ts tests/workflow-engine.test.ts`
+- `bun run typecheck`
+
 ## [0.3.2] - 2026-05-20
 
 ### Changed

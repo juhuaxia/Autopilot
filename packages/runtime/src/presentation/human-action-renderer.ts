@@ -90,12 +90,12 @@ function exactAction(record: HumanActionRecord): string {
   return "No action required"
 }
 
-function recommendedTool(record: HumanActionRecord): string {
+function recommendedActionLabel(record: HumanActionRecord): string {
   if (record.action.type === "need_answers") {
     return "workflow_answer"
   }
   if (record.action.type === "need_approval") {
-    return "workflow_approve"
+    return "confirm approval"
   }
   if (record.action.type === "blocked") {
     return "workflow_resume or workflow_resync"
@@ -276,7 +276,10 @@ export function renderHumanActionBlock(args: {
   }
 
   lines.push("")
-  lines.push(`Recommended tool: ${recommendedTool(humanAction)}`)
+  lines.push(`${humanAction.action.type === "need_approval" ? "Recommended user action" : "Recommended tool"}: ${recommendedActionLabel(humanAction)}`)
+  if (humanAction.action.type === "need_approval") {
+    lines.push("Explicit user confirmation required before approval.")
+  }
   const payload = recommendedPayload(humanAction)
   if (payload) {
     lines.push(`Recommended payload: ${payload}`)

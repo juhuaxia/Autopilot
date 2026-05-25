@@ -1429,6 +1429,69 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("persists ambiguous routing clarification so workflow_answer can continue", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-clarification-persist-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-continuation-clarify"
+
+    const openResult = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId,
+      payload: "接着做",
+    })
+
+    expect(openResult.ok).toBe(true)
+    expect(openResult.output).toContain("请确认你的意图")
+
+    const answerResult = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId,
+      payload: JSON.stringify({ choice: 2 }),
+    })
+
+    const workflows = await harness.stateStore.listWorkflows?.() ?? []
+    const derived = workflows.find((wf) => wf.workflowId.startsWith(`${workflowId}-`))
+
+    expect(answerResult.ok).toBe(true)
+    expect(answerResult.output).toContain("已创建新的独立任务。")
+    expect(derived?.workflowId).toBeDefined()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("accepts intentChoice payload for ambiguous routing clarification", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-intent-choice-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-continuation-intent"
+
+    await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId,
+      payload: "接着做",
+    })
+
+    const answerResult = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId,
+      payload: JSON.stringify({ intentChoice: 2, intentText: "创建新的独立任务" }),
+    })
+
+    const workflows = await harness.stateStore.listWorkflows?.() ?? []
+    const derived = workflows.find((wf) => wf.workflowId.startsWith(`${workflowId}-`))
+
+    expect(answerResult.ok).toBe(true)
+    expect(answerResult.output).toContain("已创建新的独立任务。")
+    expect(derived?.workflowId).toBeDefined()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("normal action payloads are not affected by continuation routing", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "wf-continuation-normal-"))
     const harness = await createHarness(baseDir)
