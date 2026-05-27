@@ -1,7 +1,9 @@
 import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
+import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 
 export interface WorkflowStateStore {
+  workspace: WorkflowWorkspace
   getWorkflow(workflowId: string): Promise<WorkflowState | null>
   saveWorkflow(state: WorkflowState): Promise<void>
   updateWorkflow(

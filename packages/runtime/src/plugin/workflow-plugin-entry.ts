@@ -7,6 +7,8 @@ import { buildAutopilotCommandPayload } from "../commands/autopilot-command-pres
 import { normalizeWorkflowRunKind } from "../../../core/src/state/workflow-runtime-state"
 import { createHarness } from "../bootstrap/create-harness"
 import { runWorkflowDoctor } from "../diagnostics/workflow-doctor"
+import { formatWorkflowRuntimeDoctorResult } from "../diagnostics/workflow-runtime-doctor-format"
+import { runWorkflowRuntimeDoctor, runWorkflowRuntimeDoctorFromBaseDir } from "../diagnostics/workflow-runtime-doctor"
 import { runAutopilotUpdate } from "../install/autopilot-updater"
 import { runWorkflowInstall } from "../install/workflow-installer"
 import {
@@ -134,6 +136,11 @@ const AUTOPILOT_HOST_COMMANDS = Object.fromEntries(
 ) as Record<string, { description: string; template: string; agent: string }>
 
 const AUTOPILOT_NODE_COMMANDS = {
+  "ap-doctor": {
+    description: "Diagnose workflow state",
+    template: "Run ap_doctor for workflowId=$ARGUMENTS. Return the diagnosis verbatim.",
+    agent: "workflow",
+  },
   "ap-develop": {
     description: "Develop node mode: run focused develop/fix work and produce a standard develop report against an existing workflow context",
     template: `${AUTOPILOT_PRESET_DEFINITIONS.safe.bridge.prompt}\n$ARGUMENTS\n/ap-node-run: develop`,
@@ -504,6 +511,16 @@ export async function workflowPlugin(input: WorkflowPluginInputLike) {
         execute: async () => {
           const harness = await harnessPromise
           return JSON.stringify(await runWorkflowDoctor(harness.workspace), null, 2)
+        },
+      },
+      ap_doctor: {
+        description: "Diagnose abnormal workflow runtime states and suggest the next action.",
+        args: {
+          workflowId: workflowIdSchema,
+        },
+        execute: async (args: { workflowId: string }) => {
+          const result = await runWorkflowRuntimeDoctorFromBaseDir({ baseDir, workflowId: args.workflowId })
+          return formatWorkflowRuntimeDoctorResult(result)
         },
       },
       workflow_install: {

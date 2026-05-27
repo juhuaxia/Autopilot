@@ -6,7 +6,7 @@ import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { WorkflowStateStore } from "./workflow-state-store"
 
 export class FileSystemWorkflowStateStore implements WorkflowStateStore {
-  constructor(private readonly workspace: WorkflowWorkspace) {}
+  constructor(public readonly workspace: WorkflowWorkspace) {}
 
   async listWorkflows(): Promise<WorkflowState[]> {
     try {

@@ -109,6 +109,36 @@ describe("buildWorkflowOpenRequest populates continuationIntent", () => {
       await rm(workspaceRoot, { recursive: true, force: true })
     }
   })
+
+  it("extracts explicit workflowId inheritance from payload", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "wf-open-explicit-workflowid-"))
+    try {
+      const result = await buildWorkflowOpenRequest("请基于这个已完成任务重审\nworkflowId=done-feature", workspaceRoot)
+      expect(result.explicitSourceWorkflowId).toBe("done-feature")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("does not treat inline workflowId text as explicit inheritance", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "wf-open-inline-workflowid-"))
+    try {
+      const result = await buildWorkflowOpenRequest("需求里有一段示例 workflowId=done-feature 仅用于说明", workspaceRoot)
+      expect(result.explicitSourceWorkflowId).toBeUndefined()
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("does not extract workflowId from code blocks", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "wf-open-codeblock-workflowid-"))
+    try {
+      const result = await buildWorkflowOpenRequest("```txt\nworkflowId=done-feature\n```\n请新建任务", workspaceRoot)
+      expect(result.explicitSourceWorkflowId).toBeUndefined()
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("workflow open request", () => {

@@ -8,6 +8,7 @@ import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-re
 import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
 import { compressArtifactForPrompt, MAX_CURRENT_ARTIFACT_CHARS, MAX_SOURCE_ARTIFACT_CHARS } from "./prompt-artifact-compression"
 import { readJsonFile } from "../shared/json-file"
+import { buildWorkspaceCodeFingerprint, buildWorkspaceCodeSnapshot, resolveCodeScanRoot } from "../shared/workspace-code-fingerprint"
 import type { ReviewSidecarEntry, ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
 
@@ -241,6 +242,10 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           throw error
         }
       }
+      if (runtime?.requiresCodeChangeBeforeDevelopComplete) {
+        lines.push("[FIX_LOOP_POLICY]")
+        lines.push("This develop run was resumed from a failed review/test with decision=fix. First modify the actual implementation or tests to address the reported issues. Do not treat a develop.md-only edit as sufficient. Update develop.md only after the code changes and relevant self-checks are complete. The develop artifact must list at least one non-artifact file under ## 修改文件 before develop can complete.")
+      }
     }
 
     if (phase === "review") {
@@ -304,14 +309,14 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
     }
     if (phase === "develop") {
       lines.push("[DEVELOP_QUALITY_POLICY] Run the minimum relevant self-checks before marking implementation complete. If checks are skipped, record the gap explicitly.")
-      lines.push("[DEVELOP_POLICY] Execute against the approved plan artifact. Before editing a leaf file, verify whether parent components, entry points, routes, stores, composables, services, helpers, imported functions, shared modules, registry tables, configuration keys, environment variables, queue names, table/field names, or other shared entry points also participate in the feature logic. Any新增/修改的引用项都必须做可解析性校验. If they do, continue tracing and update the implementation scope accordingly. When icons, images, or other assets are missing, do not create non-existent imports. Either temporarily reuse an existing in-repo asset that actually exists and disclose that substitution in the final report, or ask the user for the correct resource when no acceptable existing asset fits. Update code first, then rewrite the develop artifact with actual changed files, supporting changes, self-check evidence, and explicit regression checks for impacted existing behavior. Set ## 状态 to COMPLETED only when implementation and validation are truly done.")
+      lines.push("[DEVELOP_POLICY] Execute against the approved plan artifact. Before editing a leaf file, verify whether parent components, entry points, routes, stores, composables, services, helpers, imported functions, shared modules, registry tables, configuration keys, environment variables, queue names, table/field names, or other shared entry points also participate in the feature logic. Any新增/修改的引用项都必须做可解析性校验. If they do, continue tracing and update the implementation scope accordingly. When icons, images, or other assets are missing, do not create non-existent imports. Either temporarily reuse an existing in-repo asset that actually exists and disclose that substitution in the final report, or ask the user for the correct resource when no acceptable existing asset fits. Prefer the smallest code/test fix that directly addresses the review findings. Update code first, then rewrite the develop artifact with actual changed files, supporting changes, self-check evidence, and explicit regression checks for impacted existing behavior. If this develop run was entered from review/test via fix, a develop.md-only edit is insufficient: the implementation must change and ## 修改文件 must include at least one non-artifact file. Set ## 状态 to COMPLETED only when implementation and validation are truly done.")
       if (presetDefinition?.runtimePolicy.develop) {
         lines.push(presetDefinition.runtimePolicy.develop)
       }
     }
     if (phase === "review") {
       lines.push("[REVIEW_QUALITY_POLICY] Verify whether relevant repository checks were considered and whether missing validation creates a real confidence gap.")
-      lines.push("[REVIEW_POLICY] Review the implementation against the develop artifact and plan intent. This phase is read-only for project code: do not modify application code, tests, routes, APIs, assets, configs, generated files, or any non-review artifact files. If you find issues, record them in the review artifact only; do not fix them during review. Explicitly check whether the implementation missed parent components, parent routes, imported dependencies, shared modules, services, stores, composables, helpers, registry tables, configuration keys, environment variables, queue names, table/field names, or other upstream/downstream files that should have been traced. Any新增/修改的引用项都必须做可解析性校验. Also fail the review if the implementation introduces unverified icon/image/asset/component imports, fabricated resource references, or non-existent export names. If build, compile, typecheck, test, or startup expose a blocking failure, mark FAIL. Record concrete findings, severity summary, dependency-tracing gaps if any, regression risk to existing functionality, and set explicit pass/fail conclusion in the review artifact. Current code and current validation are the source of truth; historical artifacts may inform scope but never substitute for evidence. Keep section headings unchanged.")
+      lines.push("[REVIEW_POLICY] Review the implementation against the develop artifact and plan intent. This phase is read-only for project code: do not modify application code, tests, routes, APIs, assets, configs, generated files, or any non-review artifact files. If you find issues, record them in the review artifact only; do not fix them during review. Explicitly check whether the implementation missed parent components, parent routes, imported dependencies, shared modules, services, stores, composables, helpers, registry tables, configuration keys, environment variables, queue names, table/field names, or other upstream/downstream files that should have been traced. Any新增/修改的引用项都必须做可解析性校验. Also fail the review if the implementation introduces unverified icon/image/asset/component imports, fabricated resource references, or non-existent export names. If build, compile, typecheck, test, or startup expose a blocking failure, mark FAIL. Record concrete findings, severity summary, dependency-tracing gaps if any, regression risk to existing functionality, and set explicit pass/fail conclusion in the review artifact. For every FAIL finding, include the exact affected file/path, describe the smallest expected code/test fix, and name at least one concrete verification command that should be run after the fix. Current code and current validation are the source of truth; historical artifacts may inform scope but never substitute for evidence. Keep section headings unchanged.")
       lines.push("[REVIEW_SECTION_ORDER_POLICY] Preserve the review artifact heading order exactly as the current template. Do not move ## 结论 above ## Regression 风险评估. The required order is: # 审查报告, ## 状态, ## 轮次, ## 检查范围, optional component/section checks, reviewer sections, ## 发现的问题, ## 问题严重度汇总, ## 历史遗留观察项（非阻塞，可选）, ## Regression 风险评估, ## 结论, ## 报告语言. Only edit section bodies.")
       if (presetDefinition?.runtimePolicy.review) {
         lines.push(presetDefinition.runtimePolicy.review)
@@ -733,10 +738,32 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           return
         }
 
+        const blockedFromPhase = workflow.phase === "blocked"
+          ? runtime.blockedFromPhase ?? null
+          : workflow.phase
+        let requiresFixLoopCodeChange = blockedFromPhase === "review" || blockedFromPhase === "test"
+        let codeChangeFingerprintBaseline: string | null = null
+        let codeChangeFileSnapshotBaseline: Record<string, string> | null = null
+        if (requiresFixLoopCodeChange) {
+          try {
+            const scanRoot = resolveCodeScanRoot(this.deps.stateStore.workspace.baseDir())
+            codeChangeFingerprintBaseline = await buildWorkspaceCodeFingerprint(scanRoot)
+            codeChangeFileSnapshotBaseline = await buildWorkspaceCodeSnapshot(scanRoot)
+          } catch {
+            requiresFixLoopCodeChange = false
+            codeChangeFingerprintBaseline = null
+            codeChangeFileSnapshotBaseline = null
+          }
+        }
         await this.deps.stateStore.updateWorkflow(workflowId, {
           phase: "blocked",
           status: "blocked",
           blockReason: action.reason,
+        })
+        await this.deps.stateStore.updateRuntime(workflowId, {
+          requiresCodeChangeBeforeDevelopComplete: requiresFixLoopCodeChange,
+          codeChangeFingerprintBaseline,
+          codeChangeFileSnapshotBaseline,
         })
         await this.deps.eventStore.append({
           workflowId,

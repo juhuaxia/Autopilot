@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.4] - 2026-05-27
+
+### Added
+
+- Added `ap-doctor` as a minimal runtime diagnosis command in both CLI and OpenCode host command form.
+- Added `ap_doctor` plugin tool support for abnormal workflow state checks.
+- Added `workflow_status` guidance to point users at `ap_doctor` when a workflow looks abnormal.
+
+### Changed
+
+- `ap-doctor` now reports only `原因` and `建议` for the three minimal abnormal states: blocked, artifact repair required, and stuck/no progress.
+- `workflow_status` and `workflow_back` now degrade gracefully when workflow event logs are malformed.
+
+### Fixed
+
+- Fixed false-positive diagnosis paths so `ap-doctor` remains read-only and does not mutate workflow artifacts or config files.
+- Fixed plugin/CLI `ap-doctor` paths so malformed event/artifact state files no longer crash the diagnosis flow.
+- Fixed a test isolation issue in the workflow-engine suite by serializing the shared-state describe block.
+
+### Verification
+
+- `bun run typecheck`
+- `bun run build`
+- `bun test`
+
 ## [0.3.3] - 2026-05-21
 
 ### Added

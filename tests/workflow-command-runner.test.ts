@@ -106,6 +106,61 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("renders waiting_human feedback after workflow-open when spec refinement needs answers", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-open-waiting-human-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-waiting-human",
+      payload: JSON.stringify({
+        prompt: "请启动一个新需求开发流程。",
+        mode: "safe",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Workflow: wf-command-waiting-human")
+    expect(result.output).toContain("Status: waiting_human")
+    expect(result.output).toContain("Human action: Answer Required")
+    expect(result.output).toContain("Recommended tool: workflow_answer")
+    expect(result.output).toContain("Question")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("returns approval-required feedback immediately after workflow_answer advances to plan", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-answer-plan-feedback-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-answer-plan-feedback"
+
+    const openResult = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId,
+      payload: "请启动一个需要 refinement 的新需求。",
+    })
+
+    const derivedWorkflowId = openResult.workflowId ?? openResult.output.match(/Workflow: ([^\n]+)/)?.[1]?.trim() ?? workflowId
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId: derivedWorkflowId,
+      payload: JSON.stringify({ q_acceptance_criteria: "验收标准：进入 plan 后应立即回显审批提示。" }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Phase: plan")
+    expect(result.output).toContain("Human action: Approval Required")
+    expect(result.output).toContain("Recommended user action: confirm approval")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("stores preset mode when opening a safe workflow", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-safe-preset-"))
     const harness = await createHarness(baseDir)
@@ -157,6 +212,28 @@ describe("workflow command runner", () => {
     expect(result.ok).toBe(true)
     expect(result.output).toContain("Preset mode: debug")
     expect(runtime?.presetMode).toBe("debug")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not force the safe-first-feedback sync for standard mode", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-standard-mode-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "wf-command-standard-mode",
+      payload: JSON.stringify({
+        prompt: "请进行标准模式流程。",
+        mode: "standard",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Preset mode: standard")
+    expect(result.output).not.toContain("Suggestion: please end this workflow before opening a new one.")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -229,6 +306,241 @@ describe("workflow command runner", () => {
     expect(runtime?.runKind).toBe("review-heavy")
     expect(runtime?.parentWorkflowId).toBe("done-feature")
     expect(runtime?.sourceWorkflowId).toBe("done-feature")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("inherits only the explicitly requested workflowId when it exists", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await initializeWorkflow({
+      workflowId: "target-done",
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "目标 workflow。",
+    })
+    await harness.stateStore.updateWorkflow("target-done", {
+      phase: "done",
+      status: "completed",
+      approved: true,
+    })
+
+    await initializeWorkflow({
+      workflowId: "other-done",
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "其他 workflow。",
+    })
+    await harness.stateStore.updateWorkflow("other-done", {
+      phase: "done",
+      status: "completed",
+      approved: true,
+    })
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请基于这个已完成任务重审",
+        mode: "review-heavy",
+        sourceWorkflowId: "target-done",
+      }),
+    })
+
+    const workflows = await harness.stateStore.listWorkflows?.() ?? []
+    const nodeRun = workflows.find((w) => w.workflowId.startsWith("target-done-review-heavy-"))
+    const runtime = nodeRun ? await harness.stateStore.getRuntime(nodeRun.workflowId) : null
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("已基于 workflow target-done 创建 review-heavy 节点任务。")
+    expect(runtime?.sourceWorkflowId).toBe("target-done")
+    expect(runtime?.parentWorkflowId).toBe("target-done")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("asks to create new workflow when explicit workflowId does not exist", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-missing-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请基于这个已完成任务重审",
+        mode: "review-heavy",
+        sourceWorkflowId: "missing-workflow",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("workflowId=missing-workflow 不存在")
+    expect(result.output).toContain("是否需要新建 workflow")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("creates a new workflow after approving missing explicit workflowId clarification", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-missing-answer-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    const openResult = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请基于这个已完成任务重审",
+        mode: "review-heavy",
+        sourceWorkflowId: "missing-workflow",
+      }),
+    })
+
+    expect(openResult.ok).toBe(true)
+    expect(openResult.output).toContain("workflowId=missing-workflow 不存在")
+
+    const answerResult = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId: "new-request",
+      payload: JSON.stringify({ lifecycle_decision: "new" }),
+    })
+
+    expect(answerResult.ok).toBe(true)
+    expect(answerResult.output).toContain("已忽略不存在的 workflowId=missing-workflow，并创建新的独立任务。")
+    expect(answerResult.output).toContain("Workflow: new-request-")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("returns waiting_human immediately when missing explicit workflowId is recreated in safe mode", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-missing-safe-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请启动一个安全模式新需求。",
+        mode: "safe",
+        sourceWorkflowId: "missing-workflow",
+      }),
+    })
+
+    const answerResult = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId: "new-request",
+      payload: JSON.stringify({ lifecycle_decision: "new" }),
+    })
+
+    expect(answerResult.ok).toBe(true)
+    expect(answerResult.output).toContain("Workflow: new-request-")
+    expect(answerResult.output).toContain("Status: waiting_human")
+    expect(answerResult.output).toContain("Human action: Answer Required")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("preserves raw prompt when missing explicit workflowId is created as new", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-missing-raw-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: "请基于这个已完成任务重审\nworkflowId=missing-workflow",
+    })
+
+    const answerResult = await runner.run({
+      harness,
+      command: "workflow-answer",
+      workflowId: "new-request",
+      payload: JSON.stringify({ lifecycle_decision: "new" }),
+    })
+
+    expect(answerResult.ok).toBe(true)
+    expect(answerResult.output).toContain("已忽略不存在的 workflowId=missing-workflow，并创建新的独立任务。")
+
+    const createdWorkflowId = answerResult.workflowId ?? answerResult.output.match(/Workflow: ([^\n]+)/)?.[1]?.trim()
+    expect(createdWorkflowId).toBeTruthy()
+    const createdPrompt = await Bun.file(harness.workspace.phaseArtifactFile(createdWorkflowId!, "spec_refinement")).text()
+    expect(createdPrompt).toContain("请基于这个已完成任务重审")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("continues an explicitly requested existing workflow for non-node requests", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-continue-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await initializeWorkflow({
+      workflowId: "existing-flow",
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "已有 workflow。",
+    })
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请继续处理这个需求",
+        sourceWorkflowId: "existing-flow",
+        mode: "safe",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("已继续指定 workflow existing-flow。")
+    expect(result.output).toContain("Workflow: existing-flow")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("asks for continue-or-new when explicit workflowId exists but is completed and request is non-node", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-explicit-workflowid-completed-confirm-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await initializeWorkflow({
+      workflowId: "completed-flow",
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "已完成 workflow。",
+    })
+    await harness.stateStore.updateWorkflow("completed-flow", {
+      phase: "done",
+      status: "completed",
+      approved: true,
+    })
+
+    const result = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "new-request",
+      payload: JSON.stringify({
+        prompt: "请继续处理这个需求",
+        sourceWorkflowId: "completed-flow",
+        mode: "safe",
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("workflowId=completed-flow 已存在")
+    expect(result.output).toContain("继续这个已存在的 workflow")
+    expect(result.output).toContain("新建一个新的 workflow")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -1130,6 +1442,15 @@ describe("workflow command runner", () => {
       expect(result.output).toContain("Artifact repair pending: yes")
       expect(result.output).toContain("Artifact repair last event: artifact.repair_dispatched")
       expect(result.output).toContain("Artifact repair phase: develop")
+      expect(result.output).toContain("Doctor hint: run ap_doctor for a minimal diagnosis and next-step suggestion.")
+
+      const attachResult = await runner.run({
+        harness,
+        command: "workflow-attach",
+        workflowId,
+      })
+
+      expect(attachResult.output).not.toContain("Doctor hint: run ap_doctor for a minimal diagnosis and next-step suggestion.")
     } finally {
       await rm(baseDir, { recursive: true, force: true })
     }
@@ -1190,6 +1511,7 @@ describe("workflow command runner", () => {
     const workflowId = "wf-command-blocked-review-guidance"
 
     try {
+      await harness.sessionActivityMonitor.stop(workflowId)
       await initializeWorkflow({
         workflowId,
         stateStore: harness.stateStore,
@@ -1214,6 +1536,7 @@ describe("workflow command runner", () => {
       expect(statusResult.output).toContain("Recommended tool: workflow_resume or workflow_resync")
       expect(statusResult.output).toContain("Recommended payload: fix")
       expect(statusResult.output).toContain("return to develop")
+      expect(statusResult.output).toContain("Doctor hint: run ap_doctor for a minimal diagnosis and next-step suggestion.")
 
       const resumeResult = await runner.run({
         harness,
@@ -1296,9 +1619,39 @@ describe("workflow command runner", () => {
 
     expect(doneStatus.output).toContain("Channel state: workflow completed")
     expect(doneStatus.output).toContain("Workflow completed:")
+    expect(doneStatus.output).toContain("Suggestion: if you are done with this workflow, you can end it before opening a new one.")
 
     await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not crash workflow-back when events log is malformed", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-back-malformed-events-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-back-malformed-events"
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "验证 workflow-back 在事件日志损坏时也能正常返回。",
+      })
+
+      await writeFile(harness.workspace.eventsFile(workflowId), "{not-json}\n", "utf8")
+
+      const result = await runner.run({
+        harness,
+        command: "workflow-back",
+        workflowId,
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.output).toContain("Returned from workflow channel for wf-command-back-malformed-events")
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+    }
   })
 
   it("reuses foreground session for develop phase when provided", async () => {

@@ -245,6 +245,23 @@ So the decision should continue reliably instead of asking the same question for
 - `workflow_resume`: continue a blocked workflow decision
 - `workflow_resync`: rerun review/test after out-of-band code edits
 
+### Q: When should I use `ap-doctor`?
+
+Use `ap-doctor` when a workflow looks abnormal and you want a short diagnosis plus next-step suggestion.
+
+Typical cases:
+
+- workflow is blocked and you want to know whether to resume or resync
+- `develop` still looks like a template or unfinished repair
+- the workflow seems stuck with no visible progress
+- `workflow_status` only gives you a hint and you want a simpler diagnosis
+
+Example:
+
+```text
+bun run src/cli.ts ap-doctor wf-123
+```
+
 ### Q: What does `workflow_resume fix` do?
 
 It tells Autopilot to return from a blocked review/test situation back to `develop` so the issue can be fixed.

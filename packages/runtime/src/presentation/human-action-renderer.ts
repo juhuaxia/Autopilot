@@ -251,6 +251,10 @@ export function renderHumanActionBlock(args: {
       : workflow.status === "in_progress"
         ? "Channel state: workflow is still running or waiting for the next attach-driven continuation"
         : "Channel state: waiting for external progress or next attach")
+    if (workflow.status === "completed") {
+      lines.push("Suggestion: if you are done with this workflow, you can end it before opening a new one.")
+      lines.push(`Exact action: Run workflow_back for ${workflow.workflowId} when you want to close this workflow.`)
+    }
     if (workflow.status === "in_progress") {
       lines.push(`Exact action: Re-run workflow_attach for ${workflow.workflowId} to continue the workflow loop.`)
       lines.push("Agent hint: if you are the workflow main agent, do not stop here — continue with workflow_attach until a human action or terminal state appears.")

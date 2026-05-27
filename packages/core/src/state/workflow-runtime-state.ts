@@ -54,4 +54,7 @@ export interface WorkflowRuntimeState {
   resyncedFromPhase?: Extract<import("./phase").Phase, "review" | "test"> | null
   reviewReadyToConsolidate?: boolean
   reviewConsolidationDispatched?: boolean
+  requiresCodeChangeBeforeDevelopComplete?: boolean
+  codeChangeFingerprintBaseline?: string | null
+  codeChangeFileSnapshotBaseline?: Record<string, string> | null
 }

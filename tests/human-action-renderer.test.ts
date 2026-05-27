@@ -182,4 +182,25 @@ describe("human action renderer", () => {
     expect(renderHumanActionBlock({ workflow, runtime: null, humanAction: blockedAction }))
       .toContain("Recommended payload: fix")
   })
+
+  it("renders completion reminder for finished workflows", () => {
+    const workflow: WorkflowState = {
+      workflowId: "wf-done",
+      phase: "done",
+      status: "completed",
+      approved: true,
+      iteration: 1,
+      maxIterations: 3,
+      blockReason: null,
+      activeSessionId: null,
+      phaseEnteredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const output = renderHumanActionBlock({ workflow, runtime: null, humanAction: null })
+
+    expect(output).toContain("Channel state: workflow completed")
+    expect(output).toContain("Suggestion: if you are done with this workflow, you can end it before opening a new one.")
+    expect(output).toContain("Exact action: Run workflow_back for wf-done when you want to close this workflow.")
+  })
 })

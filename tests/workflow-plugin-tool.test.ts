@@ -52,6 +52,7 @@ describe("workflow plugin tool export", () => {
     expect(typeof plugin.tool.workflow_resync.execute).toBe("function")
     expect(typeof plugin.tool.workflow_back.execute).toBe("function")
     expect(typeof plugin.tool.workflow_doctor.execute).toBe("function")
+    expect(typeof plugin.tool.ap_doctor.execute).toBe("function")
     expect(typeof plugin.tool.workflow_install.execute).toBe("function")
     expect(typeof plugin.tool.autopilot_update.execute).toBe("function")
 
@@ -67,6 +68,52 @@ describe("workflow plugin tool export", () => {
     expect(output).toContain("projectConfigFile")
     expect(output).toContain("requiredSkills")
     expect(output).toContain("warnings")
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("registers ap-doctor as a host command", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-ap-doctor-host-"))
+    await mkdir(join(dir, ".workflow-harness"), { recursive: true })
+    await Bun.write(join(dir, ".workflow-harness", "autopilot.json"), JSON.stringify({ skillRoots: [] }, null, 2))
+    const plugin = await workflowPlugin({ directory: dir })
+    const cfg: { command?: Record<string, { template: string; description: string; agent?: string }> } = {}
+
+    await plugin.config(cfg)
+
+    expect(cfg.command?.["ap-doctor"]).toBeDefined()
+    expect(cfg.command?.["ap-doctor"]?.template).toBe("Run ap_doctor for workflowId=$ARGUMENTS. Return the diagnosis verbatim.")
+    expect(cfg.command?.["ap-doctor"]?.agent).toBe("workflow")
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("exposes ap_doctor and returns short runtime diagnosis", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-ap-doctor-"))
+    const plugin = await workflowPlugin({ directory: dir })
+
+    await plugin.tool.workflow_open.execute({ workflowId: "wf-ap-doctor", payload: "新增 ap doctor 验证。" })
+    const output = await plugin.tool.ap_doctor.execute({ workflowId: "wf-ap-doctor" })
+
+    expect(output).toContain("状态：")
+    expect(output).toContain("原因：")
+    expect(output).toContain("建议：")
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("does not mutate spec_refinement artifact when ap_doctor runs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-plugin-ap-doctor-readonly-"))
+    const plugin = await workflowPlugin({ directory: dir })
+
+    await plugin.tool.workflow_open.execute({ workflowId: "wf-ap-doctor-readonly", payload: "新增 ap doctor 只读验证。" })
+    const artifactPath = join(dir, ".workflow-harness", "workflows", "wf-ap-doctor-readonly", "spec_refinement.md")
+    const before = await readFile(artifactPath, "utf8")
+
+    await plugin.tool.ap_doctor.execute({ workflowId: "wf-ap-doctor-readonly" })
+
+    const after = await readFile(artifactPath, "utf8")
+    expect(after).toBe(before)
 
     await rm(dir, { recursive: true, force: true })
   })
@@ -99,6 +146,7 @@ describe("workflow plugin tool export", () => {
     try {
       await mkdir(join(dir, ".workflow-harness"), { recursive: true })
       await Bun.write(join(dir, ".workflow-harness", "autopilot.json"), JSON.stringify({ skillRoots: [] }, null, 2))
+      await Bun.write(join(dir, "autopilot.json"), JSON.stringify({ skillRoots: [] }, null, 2))
       await mkdir(join(homeDir, ".config", "opencode"), { recursive: true })
       await Bun.write(join(homeDir, ".config", "opencode", "opencode.json"), JSON.stringify({ plugin: ["@fkqfkq123/opencode-autopilot"] }, null, 2))
       const plugin = await workflowPlugin({ directory: dir, homeDir })
@@ -162,6 +210,7 @@ describe("workflow plugin tool export", () => {
       }>
     } = {}
 
+    await plugin.healthcheck()
     await plugin.config(cfg)
 
     const workflowAgent = cfg.agent?.workflow

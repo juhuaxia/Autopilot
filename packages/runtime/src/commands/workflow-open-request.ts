@@ -20,6 +20,7 @@ const AP_START_AT_PATTERN = /^\s*\/ap-start-at\s*:\s*(develop)\s*$/i
 const AP_DOC_PATTERN = /^\s*\/ap-doc\s*:\s*(.+?)\s*$/i
 const AP_MODE_PATTERN = /^\s*\/ap-mode\s*:\s*([\w-]+)\s*$/i
 const AP_NODE_RUN_PATTERN = /\/ap-node-run\s*:\s*(test-heavy|develop|verify)\b/i
+const EXPLICIT_WORKFLOW_ID_PATTERN = /^workflowId\s*=\s*([A-Za-z0-9._-]+)$/i
 
 type ReadTargetKind = "text" | "image" | "unknown"
 
@@ -30,6 +31,7 @@ type WorkflowOpenRequestJson = {
   startAt?: "develop"
   mode?: WorkflowPresetMode
   runKind?: WorkflowRunKind
+  sourceWorkflowId?: string
 }
 
 /**
@@ -61,6 +63,7 @@ export interface WorkflowOpenRequest {
   needsClarification: boolean
   clarificationQuestion?: string
   clarificationOptions?: string[]
+  explicitSourceWorkflowId?: string
   /**
    * Populated when the payload looks like a continuation-type command
    * (e.g. "继续下一步", "接着做"). Null for normal workflow-open payloads.
@@ -142,17 +145,34 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
   startAt?: "develop"
   mode?: WorkflowPresetMode
   runKind?: WorkflowRunKind
+  explicitSourceWorkflowId?: string
   hasExplicitAutopilotDirective: boolean
 } {
   const docPaths: string[] = []
   let startAt: "develop" | undefined
   let mode: WorkflowPresetMode | undefined
   let runKind: WorkflowRunKind | undefined
+  let explicitSourceWorkflowId: string | undefined
   let hasExplicitAutopilotDirective = false
+  let inCodeBlock = false
   const prompt = rawPayload
     .split("\n")
     .map((line) => {
       const trimmed = line.trim()
+      if (/^```/.test(trimmed) || /^~~~/.test(trimmed)) {
+        inCodeBlock = !inCodeBlock
+        return trimmed
+      }
+
+      if (!inCodeBlock) {
+        const explicitWorkflowIdMatch = trimmed.match(EXPLICIT_WORKFLOW_ID_PATTERN)
+        if (explicitWorkflowIdMatch?.[1]) {
+          explicitSourceWorkflowId = explicitWorkflowIdMatch[1].trim()
+          hasExplicitAutopilotDirective = true
+          return ""
+        }
+      }
+
       const startAtMatch = trimmed.match(AP_START_AT_PATTERN)
       if (startAtMatch?.[1]?.toLowerCase() === "develop") {
         startAt = "develop"
@@ -194,6 +214,7 @@ function extractNaturalLanguageDirectives(rawPayload: string): {
     prompt,
     docPaths: [...new Set(docPaths)],
     hasExplicitAutopilotDirective,
+    ...(explicitSourceWorkflowId ? { explicitSourceWorkflowId } : {}),
     ...(mode ? { mode } : {}),
     ...(runKind ? { runKind } : {}),
     ...(startAt ? { startAt } : {}),
@@ -247,8 +268,11 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
     const runKind = normalizedRunKind === "develop" || normalizedRunKind === "verify"
       ? normalizedRunKind
       : undefined
+    const sourceWorkflowId = typeof (parsed as { sourceWorkflowId?: unknown }).sourceWorkflowId === "string"
+      ? (parsed as { sourceWorkflowId: string }).sourceWorkflowId.trim()
+      : undefined
 
-    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined || mode !== undefined || runKind !== undefined
+    const hasKnownKey = prompt !== undefined || projectContext !== undefined || docPaths !== undefined || startAt !== undefined || mode !== undefined || runKind !== undefined || sourceWorkflowId !== undefined
     if (!hasKnownKey) {
       return null
     }
@@ -260,6 +284,7 @@ const parseStructuredRequest = (payload: string): WorkflowOpenRequestJson | null
       ...(startAt !== undefined ? { startAt } : {}),
       ...(mode !== undefined ? { mode } : {}),
       ...(runKind !== undefined ? { runKind } : {}),
+      ...(sourceWorkflowId !== undefined ? { sourceWorkflowId } : {}),
     }
   } catch {
     return null
@@ -468,6 +493,9 @@ export async function buildWorkflowOpenRequestWithOptions(
   let prompt = effectivePrompt
   const mode = structured?.mode ?? structuredPromptDirectives?.mode ?? naturalLanguageDirectives?.mode
   const runKind = structured?.runKind ?? structuredPromptDirectives?.runKind ?? naturalLanguageDirectives?.runKind
+  const explicitSourceWorkflowId = structured?.sourceWorkflowId?.trim()
+    || structuredPromptDirectives?.explicitSourceWorkflowId
+    || naturalLanguageDirectives?.explicitSourceWorkflowId
   const modeDefaultStartAt = mode === "light" ? "develop" : undefined
   if (explicitDocumentReference) {
     prompt = `请基于这份文档启动 workflow。\n${normalizeDocumentLikeInput(rawPayload)}`
@@ -651,6 +679,7 @@ export async function buildWorkflowOpenRequestWithOptions(
       : {}),
     ...(projectContext ? { projectContext } : {}),
     ...(continuationIntent ? { continuationIntent } : {}),
+    ...(explicitSourceWorkflowId ? { explicitSourceWorkflowId } : {}),
   }
 }
 

@@ -3,8 +3,10 @@ import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
 import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize-workflow"
 import { DefaultWorkflowCommandRunner } from "../packages/runtime/src/commands/default-workflow-command-runner"
 import { formatWorkflowDoctorResult, formatWorkflowInstallResult, formatWorkflowUpdateResult } from "../packages/runtime/src/diagnostics/workflow-diagnostics-format"
+import { formatWorkflowRuntimeDoctorResult } from "../packages/runtime/src/diagnostics/workflow-runtime-doctor-format"
 import { runAutopilotUpdate } from "../packages/runtime/src/install/autopilot-updater"
 import { runWorkflowDoctor } from "../packages/runtime/src/diagnostics/workflow-doctor"
+import { runWorkflowRuntimeDoctor, runWorkflowRuntimeDoctorFromBaseDir } from "../packages/runtime/src/diagnostics/workflow-runtime-doctor"
 import { runWorkflowInstall } from "../packages/runtime/src/install/workflow-installer"
 import { renderHumanActionBlock } from "../packages/runtime/src/presentation/human-action-renderer"
 import { renderWatchFrame } from "../packages/runtime/src/presentation/watch-renderer"
@@ -64,6 +66,8 @@ function normalizeCommand(command: string): string {
       return "back"
     case "workflow-doctor":
       return "doctor"
+    case "ap-doctor":
+      return "ap-doctor"
     case "workflow-install":
       return "install"
     case "autopilot-update":
@@ -129,7 +133,7 @@ async function main(): Promise<void> {
   const normalizedCommand = command ? normalizeCommand(command) : command
 
   if (!normalizedCommand) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|ap-doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "install") {
@@ -148,6 +152,16 @@ async function main(): Promise<void> {
     const baseDir = join(process.cwd(), ".workflow-harness")
     const result = await runWorkflowDoctor(new DefaultWorkflowWorkspace(baseDir))
     console.log(formatWorkflowDoctorResult(result))
+    return
+  }
+
+  if (normalizedCommand === "ap-doctor") {
+    if (!workflowId) {
+      throw new Error("Usage: bun run cli ap-doctor <workflowId>")
+    }
+    const baseDir = join(process.cwd(), ".workflow-harness")
+    const result = await runWorkflowRuntimeDoctorFromBaseDir({ baseDir, workflowId })
+    console.log(formatWorkflowRuntimeDoctorResult(result))
     return
   }
 
@@ -171,7 +185,7 @@ async function main(): Promise<void> {
   const commandRunner = new DefaultWorkflowCommandRunner()
 
   if (!workflowId) {
-    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
+    throw new Error("Usage: bun run cli <start|status|watch|attach|answer|approve|resume|resync|doctor|ap-doctor|install|update|autopilot-update|workflow-open|workflow-attach|workflow-status|workflow-answer|workflow-approve|workflow-resume|workflow-resync|workflow-back|workflow-doctor|workflow-install> <workflowId> [payload]")
   }
 
   if (normalizedCommand === "start") {

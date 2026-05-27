@@ -163,6 +163,8 @@ workflow_status -> workflow_resync -> workflow_attach
 - `/ap-develop`
 - `/ap-verify`
 
+如果 workflow 看起来异常，优先用 `ap-doctor` 做一个最小诊断。
+
 ## 工作流恢复
 
 ### 什么时候用 `workflow_resume`
@@ -250,6 +252,23 @@ workflow_status -> workflow_resync -> workflow_attach
 
 - `workflow_resume`：继续一个被阻塞的决策点
 - `workflow_resync`：在你手改代码后，让 review/test 重新基于当前代码重跑
+
+### Q：什么时候该用 `ap-doctor`？
+
+当你只想快速判断 workflow 是否异常，并拿到一句简短的修复建议时，用 `ap-doctor`。
+
+常见场景：
+
+- workflow 被阻塞，不确定该 `resume` 还是 `resync`
+- `develop` 看起来还是模板或还没完成
+- workflow 没有明显推进，像是卡住了
+- `workflow_status` 输出太长，只想先看结论
+
+示例：
+
+```text
+bun run src/cli.ts ap-doctor wf-123
+```
 
 ### Q：`workflow_resume fix` 是什么意思？
 

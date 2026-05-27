@@ -60,6 +60,9 @@ export async function initializeWorkflow(args: {
     resyncCount: 0,
     lastResyncedAt: null,
     resyncedFromPhase: null,
+    requiresCodeChangeBeforeDevelopComplete: false,
+    codeChangeFingerprintBaseline: null,
+    codeChangeFileSnapshotBaseline: null,
   }
 
   await stateStore.saveWorkflow(workflow)

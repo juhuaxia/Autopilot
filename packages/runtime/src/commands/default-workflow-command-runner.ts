@@ -247,6 +247,20 @@ async function buildStatusEnhancements(args: {
     lines.push(`Phase summary: ${evaluation.summary}`)
   }
 
+  const recentRepairEvent = [...events].reverse().find((event) =>
+    event.type === "artifact.repair_dispatched" || event.type === "artifact.repair_blocked",
+  )
+
+  const abnormalState = workflow.status === "blocked"
+    || evaluation.missing.includes("artifact_unchanged_from_template")
+    || evaluation.missing.includes("non_artifact_code_change_required_after_fix")
+    || runtime?.developArtifactRepairDispatchPending === true
+    || runtime?.reviewArtifactRepairDispatchPending === true
+    || runtime?.testArtifactRepairDispatchPending === true
+  if (abnormalState) {
+    lines.push("Doctor hint: run ap_doctor for a minimal diagnosis and next-step suggestion.")
+  }
+
     if (storedSession?.sessionId) {
       lines.push(`Worker session: ${storedSession.sessionId}`)
       lines.push(`Worker session phase: ${storedSession.phase}`)
@@ -336,10 +350,7 @@ async function buildStatusEnhancements(args: {
       : workflow.phase === "test"
         ? runtime?.testArtifactRepairDispatchPending === true
         : false
-  const recentRepairEvent = [...events].reverse().find((event) =>
-    event.type === "artifact.repair_dispatched" || event.type === "artifact.repair_blocked",
-  )
-  if (artifactRepairPending || recentRepairEvent || evaluation.missing.includes("artifact_unchanged_from_template")) {
+  if (artifactRepairPending || evaluation.missing.includes("artifact_unchanged_from_template")) {
     lines.push(`Artifact repair pending: ${artifactRepairPending ? "yes" : "no"}`)
     if (evaluation.missing.includes("artifact_unchanged_from_template")) {
       lines.push("Artifact repair signal: artifact_unchanged_from_template")
@@ -446,6 +457,7 @@ type PendingClarification = {
   prompt: string
   options: string[]
   sourceWorkflowId?: string
+  missingWorkflowId?: string
   mode?: string
 }
 
@@ -459,7 +471,7 @@ async function buildWorkflowStatusResult(args: {
   const workflow = await harness.stateStore.getWorkflow(workflowId)
   const runtime = await harness.stateStore.getRuntime(workflowId)
   const humanAction = await harness.humanActionStore.getCurrent(workflowId)
-  const events = await harness.eventStore.list(workflowId)
+  const events = await harness.eventStore.list(workflowId).catch(() => [])
   const clarification = await readPendingClarification(harness, clarificationWorkflowId ?? workflowId)
   if (!workflow) {
     if (clarification) {
@@ -498,6 +510,37 @@ async function buildWorkflowStatusResult(args: {
     events,
     workflowId,
   }
+}
+
+async function isWaitingHumanState(harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>, workflowId: string): Promise<boolean> {
+  const workflow = await harness.stateStore.getWorkflow(workflowId)
+  if (!workflow) {
+    return false
+  }
+  if (workflow.status === "waiting_human") {
+    return true
+  }
+  const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+  return !!humanAction && humanAction.status !== "consumed"
+}
+
+async function syncInitialHumanActionState(args: {
+  harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
+  workflowId: string
+}): Promise<void> {
+  const workflow = await args.harness.stateStore.getWorkflow(args.workflowId)
+  if (!workflow || workflow.phase !== "spec_refinement" || workflow.status !== "in_progress") {
+    return
+  }
+  const relevantSession = await args.harness.sessionCoordinator.getRelevantSession(args.workflowId)
+  if (!relevantSession.sessionId || relevantSession.status !== "idle") {
+    return
+  }
+  await args.harness.tickScheduler.requestTick(args.workflowId, "workflow open initial sync")
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function clarificationFilePath(harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>, workflowId: string): string {
@@ -657,6 +700,80 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       const currentWorkflow = await harness.stateStore.getWorkflow(workflowId)
       const currentRuntime = await harness.stateStore.getRuntime(workflowId)
       const currentArtifact = currentWorkflow ? await harness.artifactEvaluator.evaluate(currentWorkflow) : null
+      const explicitSourceWorkflowId = openRequest.explicitSourceWorkflowId?.trim()
+      const explicitSourceWorkflow = explicitSourceWorkflowId
+        ? await harness.stateStore.getWorkflow(explicitSourceWorkflowId)
+        : null
+
+      if (explicitSourceWorkflowId && !explicitSourceWorkflow) {
+        await savePendingClarification(harness, workflowId, {
+          rawPayload: payload ?? "",
+          prompt: `指定的 workflowId=${explicitSourceWorkflowId} 不存在，是否需要新建 workflow？`,
+          options: [
+            "1. 新建一个新的 workflow",
+            "2. 取消，我想换一个已存在的 workflowId",
+          ],
+          missingWorkflowId: explicitSourceWorkflowId,
+          ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+        })
+        return {
+          ok: true,
+          output: [
+            `指定的 workflowId=${explicitSourceWorkflowId} 不存在，是否需要新建 workflow？`,
+            "1. 新建一个新的 workflow",
+            "2. 取消，我想换一个已存在的 workflowId",
+          ].join("\n"),
+          events: [],
+          workflowId,
+        }
+      }
+
+      if (explicitSourceWorkflow && explicitSourceWorkflowId) {
+        const explicitRunKind: "review-heavy" | "develop" | "verify" | null = openRequest.mode === "review-heavy"
+          ? "review-heavy"
+          : openRequest.runKind === "develop" || openRequest.runKind === "verify"
+            ? openRequest.runKind
+            : null
+
+        if (!explicitRunKind) {
+          const activeState = isActiveWorkflow(explicitSourceWorkflow)
+          if (activeState) {
+            if (foregroundSessionId) {
+              await harness.stateStore.updateRuntime(explicitSourceWorkflowId, {
+                preferredForegroundSessionId: foregroundSessionId,
+                ignoredForRoutingAt: null,
+              })
+            }
+            await harness.attachService.attach(explicitSourceWorkflowId)
+            return buildWorkflowStatusResult({
+              harness,
+              workflowId: explicitSourceWorkflowId,
+              prefixOutput: `已继续指定 workflow ${explicitSourceWorkflowId}。`,
+            })
+          }
+
+          await savePendingClarification(harness, workflowId, {
+            rawPayload: payload ?? "",
+            prompt: `指定的 workflowId=${explicitSourceWorkflowId} 已存在，但当前请求不是节点任务。你想继续这个 workflow，还是新建一个新的 workflow？`,
+            options: [
+              "1. 继续这个已存在的 workflow",
+              "2. 新建一个新的 workflow",
+            ],
+            sourceWorkflowId: explicitSourceWorkflowId,
+            ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+          })
+          return {
+            ok: true,
+            output: [
+              `指定的 workflowId=${explicitSourceWorkflowId} 已存在，但当前请求不是节点任务。你想继续这个 workflow，还是新建一个新的 workflow？`,
+              "1. 继续这个已存在的 workflow",
+              "2. 新建一个新的 workflow",
+            ].join("\n"),
+            events: [],
+            workflowId,
+          }
+        }
+      }
 
       const shouldChainDevelopFromFailedNode = openRequest.runKind === "develop"
         && !!currentWorkflow
@@ -698,11 +815,18 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         })
       }
 
-      const chainedNodeContext = openRequest.runKind === "develop" || openRequest.runKind === "verify"
+      const explicitWorkflowIdRequested = !!explicitSourceWorkflow && !!explicitSourceWorkflowId
+
+      const chainedNodeContext = explicitSourceWorkflowId
+        ? null
+        : openRequest.runKind === "develop" || openRequest.runKind === "verify"
         ? await resolveNodeChainContext({ harness, workflowId })
         : null
-      const completedRequestedWorkflow = (openRequest.mode === "review-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify")
-        ? await findCompletedWorkflow(harness, chainedNodeContext?.sourceWorkflowId ?? workflowId)
+      const completedRequestedWorkflow = explicitWorkflowIdRequested
+        ? explicitSourceWorkflow
+        : (openRequest.mode === "review-heavy" || openRequest.runKind === "develop" || openRequest.runKind === "verify")
+        ? explicitSourceWorkflow
+          ?? await findCompletedWorkflow(harness, chainedNodeContext?.sourceWorkflowId ?? workflowId)
         : null
       if (completedRequestedWorkflow) {
         const requestedNodeRunKind: "review-heavy" | "develop" | "verify" | undefined = openRequest.mode === "review-heavy"
@@ -713,9 +837,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         if (!requestedNodeRunKind) {
           throw new Error("Node run request missing run kind")
         }
-        const sourceWorkflowId = chainedNodeContext?.sourceWorkflowId ?? completedRequestedWorkflow.workflowId
+        const sourceWorkflowId = explicitSourceWorkflowId ?? chainedNodeContext?.sourceWorkflowId ?? completedRequestedWorkflow.workflowId
         const parentWorkflowId = requestedNodeRunKind === "develop" || requestedNodeRunKind === "verify"
-          ? (chainedNodeContext?.parentWorkflowId ?? completedRequestedWorkflow.workflowId)
+          ? (explicitSourceWorkflowId ?? chainedNodeContext?.parentWorkflowId ?? completedRequestedWorkflow.workflowId)
           : completedRequestedWorkflow.workflowId
         const targetId = resolveNodeRunWorkflowTargetId(parentWorkflowId, requestedNodeRunKind)
         const nodeRequest = requestedNodeRunKind === "review-heavy"
@@ -795,7 +919,13 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
         ...(pendingHumanActionWorkflowId ? { pendingHumanActionWorkflowId } : {}),
       }
 
-      const routingDecision: WorkflowRoutingDecision = openRequest.mode
+      const routingDecision: WorkflowRoutingDecision = explicitSourceWorkflowId
+        ? {
+            action: "confirm",
+            reason: `explicit-workflowid-present:${explicitSourceWorkflowId}`,
+            targetWorkflowId: explicitSourceWorkflowId,
+          }
+        : openRequest.mode
         ? (() => {
             const mostRecentActive = getMostRecentActiveWorkflow(activeWorkflows)
             if (mostRecentActive) {
@@ -878,6 +1008,27 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           // Cleanup old completed workflows
           await archiveCompletedWorkflows(harness, ARCHIVE_KEEP_COUNT)
           await harness.attachService.attach(targetId)
+          // Safe mode often reaches waiting_human immediately after the first dispatch.
+          // Do one post-open sync here so the first human-action prompt is visible right away.
+          // This is UI feedback only: it does not change workflow state-machine behavior.
+          if (openRequest.mode === "safe") {
+            await syncInitialHumanActionState({ harness, workflowId: targetId })
+            const startedAt = Date.now()
+            while (Date.now() - startedAt < 600) {
+              if (await isWaitingHumanState(harness, targetId)) {
+                break
+              }
+              await sleep(60)
+              await syncInitialHumanActionState({ harness, workflowId: targetId })
+            }
+          }
+          if (await isWaitingHumanState(harness, targetId)) {
+            return buildWorkflowStatusResult({
+              harness,
+              workflowId: targetId,
+              prefixOutput: formatRoutingOutput(routingDecision),
+            })
+          }
           return buildWorkflowStatusResult({
             harness,
             workflowId: targetId,
@@ -964,6 +1115,53 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           : typeof lifecycleDecisionRaw === "number"
             ? String(lifecycleDecisionRaw)
             : undefined
+        const pending = await readPendingClarification(harness, workflowId)
+        if (pending?.missingWorkflowId && (lifecycleDecision === "new" || lifecycleDecision === "1")) {
+          await clearPendingClarification(harness, workflowId)
+          const targetId = await harness.stateStore.getWorkflow(workflowId)
+            ? resolvePresetWorkflowTargetId(workflowId)
+            : generateDerivedWorkflowId(workflowId, "new")
+          await initializeWorkflow({
+            workflowId: targetId,
+            stateStore: harness.stateStore,
+            artifactEvaluator: harness.artifactEvaluator,
+            userRequest: pending.rawPayload,
+            ...(pending.mode ? { presetMode: pending.mode as any } : {}),
+          })
+          if (foregroundSessionId) {
+            await harness.stateStore.updateRuntime(targetId, {
+              preferredForegroundSessionId: foregroundSessionId,
+            })
+          }
+          await archiveCompletedWorkflows(harness, ARCHIVE_KEEP_COUNT)
+          await harness.attachService.attach(targetId)
+          if (pending?.mode === "safe") {
+            await syncInitialHumanActionState({ harness, workflowId: targetId })
+            const startedAt = Date.now()
+            while (Date.now() - startedAt < 600) {
+              if (await isWaitingHumanState(harness, targetId)) {
+                break
+              }
+              await sleep(60)
+              await syncInitialHumanActionState({ harness, workflowId: targetId })
+            }
+          }
+          return buildWorkflowStatusResult({
+            harness,
+            workflowId: targetId,
+            clarificationWorkflowId: workflowId,
+            prefixOutput: `已忽略不存在的 workflowId=${pending.missingWorkflowId}，并创建新的独立任务。`,
+          })
+        }
+        if (pending?.missingWorkflowId && (lifecycleDecision === "2" || lifecycleDecision === "cancel")) {
+          await clearPendingClarification(harness, workflowId)
+          return {
+            ok: true,
+            output: `已取消。请重新提供一个已存在的 workflowId，或直接发起一个新的 workflow 请求。`,
+            events: [],
+            workflowId,
+          }
+        }
         if (lifecycleDecision === "resume" || lifecycleDecision === "1") {
           // User chose to resume active workflow
           const pending = await readPendingClarification(harness, workflowId)
@@ -1009,9 +1207,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           if (pending?.rawPayload) {
             try {
               const parsed = JSON.parse(pending.rawPayload) as { prompt?: string }
-              originalPrompt = parsed.prompt
+              originalPrompt = parsed.prompt ?? pending.rawPayload
             } catch {
-              originalPrompt = undefined
+              originalPrompt = pending.rawPayload
             }
           }
           const targetId = await harness.stateStore.getWorkflow(workflowId)
@@ -1032,6 +1230,17 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           // Cleanup old completed and archived workflows
           await archiveCompletedWorkflows(harness, ARCHIVE_KEEP_COUNT)
           await harness.attachService.attach(targetId)
+          if (pending?.mode === "safe") {
+            await syncInitialHumanActionState({ harness, workflowId: targetId })
+            const startedAt = Date.now()
+            while (Date.now() - startedAt < 600) {
+              if (await isWaitingHumanState(harness, targetId)) {
+                break
+              }
+              await sleep(60)
+              await syncInitialHumanActionState({ harness, workflowId: targetId })
+            }
+          }
           return buildWorkflowStatusResult({
             harness,
             workflowId: targetId,
@@ -1089,7 +1298,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
       await harness.attachService.attach(workflowId)
     } else if (command === "workflow-back") {
       await harness.sessionActivityMonitor.stop(workflowId)
-      const events = await harness.eventStore.list(workflowId)
+      const events = await harness.eventStore.list(workflowId).catch(() => [])
       return {
         ok: true,
         output: `Returned from workflow channel for ${workflowId}. Your workflow continues and can be re-attached later.`,

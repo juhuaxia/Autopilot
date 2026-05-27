@@ -98,6 +98,11 @@ export class DefaultHumanActionService implements HumanActionService {
       await this.humanActionStore.markConsumed(current.id)
     }
 
+    const currentBlockedPhase = current?.action.type === "blocked" ? current.action.phase : null
+    const blockedReviewOrTest = currentBlockedPhase === "review"
+      || currentBlockedPhase === "test"
+      || (workflow?.phase === "blocked" && (runtime?.blockedFromPhase === "review" || runtime?.blockedFromPhase === "test"))
+
     await this.stateStore.updateWorkflow(workflowId, {
       ...(workflow?.phase === "blocked" && runtime?.blockedFromPhase
         ? { phase: runtime.blockedFromPhase }
@@ -105,6 +110,7 @@ export class DefaultHumanActionService implements HumanActionService {
       status: "pending",
       blockReason: null,
     })
+
     await this.stateStore.updateRuntime(workflowId, {
       blockedFromPhase: null,
       waitingHumanActionId: null,
@@ -116,9 +122,17 @@ export class DefaultHumanActionService implements HumanActionService {
       testArtifactRepairDispatchPending: false,
       reviewReadyToConsolidate: false,
       reviewConsolidationDispatched: false,
+      requiresCodeChangeBeforeDevelopComplete: decision === "fix" && blockedReviewOrTest
+        ? (runtime?.requiresCodeChangeBeforeDevelopComplete ?? true)
+        : false,
+      codeChangeFingerprintBaseline: decision === "fix" && blockedReviewOrTest
+        ? runtime?.codeChangeFingerprintBaseline ?? null
+        : null,
+      codeChangeFileSnapshotBaseline: decision === "fix" && blockedReviewOrTest
+        ? runtime?.codeChangeFileSnapshotBaseline ?? null
+        : null,
       pendingBlockedDecision: decision && (
-        (current && current.action.type === "blocked")
-        || (workflow?.phase === "blocked" && (runtime?.blockedFromPhase === "review" || runtime?.blockedFromPhase === "test"))
+        blockedReviewOrTest
       )
         ? {
             actionId: current?.id ?? `resume:${workflowId}`,
@@ -177,6 +191,9 @@ export class DefaultHumanActionService implements HumanActionService {
       resyncCount: (runtime?.resyncCount ?? 0) + 1,
       lastResyncedAt: new Date().toISOString(),
       resyncedFromPhase: resyncPhase,
+      requiresCodeChangeBeforeDevelopComplete: false,
+      codeChangeFingerprintBaseline: null,
+      codeChangeFileSnapshotBaseline: null,
       phaseDispatchAttempts: {
         ...(runtime?.phaseDispatchAttempts ?? {}),
         [resyncPhase]: 0,

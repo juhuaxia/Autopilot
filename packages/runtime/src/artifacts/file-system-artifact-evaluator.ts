@@ -6,7 +6,34 @@ import type { WorkflowState } from "../../../core/src/state/workflow-state"
 import type { Question } from "../../../core/src/human-actions/question"
 import { getAutopilotPresetDefinition } from "../commands/autopilot-presets"
 import { readJsonFile, writeJsonFile } from "../shared/json-file"
+import { buildWorkspaceCodeSnapshot, resolveCodeScanRoot } from "../shared/workspace-code-fingerprint"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
+
+function normalizeListFilePath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, "/")
+}
+
+function countRealCodeChanges(currentSnapshot: Record<string, string>, baselineSnapshot: Record<string, string> | null, listedFiles: string[]): number {
+  if (!baselineSnapshot) {
+    return 0
+  }
+
+  return listedFiles
+    .map(normalizeListFilePath)
+    .filter((filePath) => !isArtifactOnlyListedFile(filePath))
+    .filter((filePath) => {
+      const currentEntry = currentSnapshot[filePath]
+      const baselineEntry = baselineSnapshot[filePath]
+      if (typeof baselineEntry === "string" && typeof currentEntry === "string") {
+        return baselineEntry !== currentEntry
+      }
+      return typeof baselineEntry === "string" && typeof currentEntry !== "string"
+        ? true
+        : typeof baselineEntry !== "string" && typeof currentEntry === "string"
+          ? true
+          : false
+    }).length
+}
 
 interface PhaseArtifactState {
   valid: boolean
@@ -148,6 +175,9 @@ const SECTION_RULES: Record<Extract<Phase, "spec_refinement" | "plan" | "develop
       "## 检查范围",
       "## 组件复用验收结果（如适用）",
       "## Section 验收映射检查结果（如适用）",
+      "## 建议修复文件（如适用）",
+      "## 建议修复方案（如适用）",
+      "## 建议验证命令（如适用）",
       "## 发现的问题",
       "## 问题严重度汇总",
       "## 历史遗留观察项（非阻塞，可选）",
@@ -180,7 +210,7 @@ const SECTION_RULES: Record<Extract<Phase, "spec_refinement" | "plan" | "develop
 
 const NON_BLOCKING_SECTIONS: Partial<Record<Extract<Phase, "develop" | "review" | "test">, string[]>> = {
   develop: ["## 配套修改", "## 备注", "## 报告语言"],
-  review: ["## 组件复用验收结果（如适用）", "## Section 验收映射检查结果（如适用）", "## 历史遗留观察项（非阻塞，可选）", "## 报告语言"],
+  review: ["## 组件复用验收结果（如适用）", "## Section 验收映射检查结果（如适用）", "## 建议修复文件（如适用）", "## 建议修复方案（如适用）", "## 建议验证命令（如适用）", "## 历史遗留观察项（非阻塞，可选）", "## 报告语言"],
   test: ["## 新增页面专项验证（如适用）", "## Figma 高保真验证（如适用）", "## Key Visual Elements 验证（如适用）", "## 历史遗留观察项（非阻塞，可选）", "## 开发者决策建议", "## 报告语言"],
 }
 
@@ -247,6 +277,39 @@ const sanitizeSummaryBody = (body: string): string => body
   .filter((line) => line !== "[USER_PROMPT]")
   .filter((line) => !/^(?:文档[:：]?)?(?:\.?\.?\/|\/).+\.(?:md|markdown|txt|rst|adoc|pdf|docx)$/i.test(line))
   .join("\n")
+
+const ARTIFACT_ONLY_PATH_PATTERNS = [
+  /(^|\/)spec_refinement\.md$/i,
+  /(^|\/)plan\.md$/i,
+  /(^|\/)develop\.md$/i,
+  /(^|\/)review\.md$/i,
+  /(^|\/)test\.md$/i,
+  /(^|\/)artifact-state\.json$/i,
+  /(^|\/)workflow-state\.json$/i,
+  /(^|\/)workflow-runtime-state\.json$/i,
+  /(^|\/)human-action\.json$/i,
+  /(^|\/)sessions\.json$/i,
+  /(^|\/)events(?:\.ndjson|\.json)$/i,
+  /(^|\/)review-sidecar\.json$/i,
+]
+
+const extractListedFilesFromDevelopArtifact = (content: string): string[] => {
+  const body = extractSectionBody(content, "## 修改文件", SECTION_RULES.develop.sections)
+  return body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/^\d+\.\s*/, ""))
+    .map((line) => line.replace(/^[-*]\s*/, ""))
+    .map((line) => line.match(/`([^`]+)`/)?.[1] ?? line)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+const isArtifactOnlyListedFile = (filePath: string): boolean => {
+  const normalized = filePath.trim().replace(/\\/g, "/")
+  return ARTIFACT_ONLY_PATH_PATTERNS.some((pattern) => pattern.test(normalized))
+}
 
 const questionChecklistResolved = (content: string, sections: string[]): boolean => {
   const body = extractSectionBody(content, "## 疑问清单", sections)
@@ -642,6 +705,15 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
       "## Section 验收映射检查结果（如适用）",
       "不适用或待 AI 判定。",
       "",
+      "## 建议修复文件（如适用）",
+      "待 AI 根据发现的问题列出最小受影响文件集合。",
+      "",
+      "## 建议修复方案（如适用）",
+      "待 AI 根据发现的问题补充最小修复路径。",
+      "",
+      "## 建议验证命令（如适用）",
+      "待 AI 补充至少一条与修复直接相关的验证命令。",
+      "",
       ...reviewerSections.flatMap(([heading, body]) => [heading, body, ""]),
       "## 发现的问题",
       "待 AI 审查开发产物后补充。若存在 Reviewer Summaries 或 Candidate Findings For Main Review，请先合并 reviewer sidecar 候选问题后去重整理，再写入主问题清单。",
@@ -1026,6 +1098,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
 
     let content = await this.readPhaseArtifact(state.workflowId, state.phase)
     let fromWorkspace = this.evaluatePhaseContent(state.phase, content)
+    const runtime = await readJsonFile<WorkflowRuntimeState>(this.workspace.workflowRuntimeStateFile(state.workflowId))
 
     const hasUnchangedTemplateFingerprint = (state.phase === "develop" || state.phase === "review" || state.phase === "test")
       && typeof current.templateFingerprint === "string"
@@ -1077,6 +1150,35 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         await this.updatePhaseState(state.workflowId, "spec_refinement", {
           ...phasePatch,
         })
+      }
+    }
+
+    if (state.phase === "develop" && runtime?.requiresCodeChangeBeforeDevelopComplete && fromWorkspace.readyForNextPhase) {
+      const listedFiles = extractListedFilesFromDevelopArtifact(content)
+      const hasNonArtifactChange = listedFiles.some((filePath) => !isArtifactOnlyListedFile(filePath))
+      const baselineSnapshot = runtime.codeChangeFileSnapshotBaseline ?? null
+      let hasRealWorkspaceChange = false
+
+      try {
+        const currentSnapshot = await buildWorkspaceCodeSnapshot(resolveCodeScanRoot(this.workspace.baseDir()))
+        hasRealWorkspaceChange = countRealCodeChanges(currentSnapshot, baselineSnapshot, listedFiles) > 0
+      } catch {
+        fromWorkspace = {
+          ...fromWorkspace,
+          warnings: [...(fromWorkspace.warnings ?? []), "workspace_code_change_check_skipped"],
+        }
+      }
+
+      if (!hasNonArtifactChange || !hasRealWorkspaceChange) {
+        fromWorkspace = {
+          ...fromWorkspace,
+          valid: false,
+          readyForNextPhase: false,
+          missing: [...fromWorkspace.missing, "non_artifact_code_change_required_after_fix"],
+          summary: hasNonArtifactChange
+            ? "本次 develop 由 review/test 的 fix 决策回流，但 develop.md 中列出的非 artifact 文件未检测到相对回流基线的真实变更。请先修改这些实现或测试文件，再更新 develop 报告。"
+            : "本次 develop 由 review/test 的 fix 决策回流，必须先修复实现代码或测试，再更新 develop 报告。当前 ## 修改文件 未包含任何非 artifact 文件。",
+        }
       }
     }
 

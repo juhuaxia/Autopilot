@@ -7,15 +7,23 @@ import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize
 import { readFile } from "node:fs/promises"
 import { writeFile } from "node:fs/promises"
 import { writeJsonFile } from "../packages/runtime/src/shared/json-file"
+import { buildWorkspaceCodeFingerprint, buildWorkspaceCodeSnapshot } from "../packages/runtime/src/shared/workspace-code-fingerprint"
 import { ReviewSidecarManager } from "../packages/runtime/src/review/review-sidecar-manager"
 import { DefaultWorkflowWorkspace } from "../packages/runtime/src/workspace/workflow-workspace"
 
-describe("workflow harness MVP", () => {
+describe.serial("workflow harness MVP", () => {
   let baseDir = ""
 
   beforeEach(async () => {
     baseDir = await mkdtemp(join(tmpdir(), "workflow-harness-"))
   })
+
+  async function buildCodeBaseline(rootDir: string) {
+    return {
+      codeChangeFingerprintBaseline: await buildWorkspaceCodeFingerprint(rootDir),
+      codeChangeFileSnapshotBaseline: await buildWorkspaceCodeSnapshot(rootDir),
+    }
+  }
 
   it("auto progresses to human answers, then approval, then develop", async () => {
     const harness = await createHarness(baseDir)
@@ -122,6 +130,7 @@ describe("workflow harness MVP", () => {
     expect(developSession?.lastPrompt).toContain("[DEVELOP_QUALITY_POLICY]")
     expect(developSession?.lastPrompt).toContain("[DEVELOP_POLICY]")
     expect(developSession?.lastPrompt).toContain("regression checks")
+    expect(developSession?.lastPrompt).toContain("smallest code/test fix")
     expect(developSession?.lastPrompt).toContain("do not create non-existent imports")
     expect(developSession?.lastPrompt).toContain("temporarily reuse an existing in-repo asset")
     expect(developSession?.lastPrompt).toContain("[COMPLETION_POLICY]")
@@ -486,6 +495,9 @@ describe("workflow harness MVP", () => {
       "utf8",
     )
     expect(reviewFile).toContain("## 检查范围")
+    expect(reviewFile).toContain("## 建议修复文件（如适用）")
+    expect(reviewFile).toContain("## 建议修复方案（如适用）")
+    expect(reviewFile).toContain("## 建议验证命令（如适用）")
     expect(reviewFile).toContain("## 发现的问题")
     expect(reviewFile).toContain("待 AI 审查开发产物后补充。")
     expect(reviewFile).toContain("回归风险判断")
@@ -500,6 +512,9 @@ describe("workflow harness MVP", () => {
     expect(storedReviewSession?.lastPrompt).toContain("[REVIEW_SECTION_ORDER_POLICY]")
     expect(storedReviewSession?.lastPrompt).toContain("Do not move ## 结论 above ## Regression 风险评估")
     expect(storedReviewSession?.lastPrompt).toContain("regression risk")
+    expect(storedReviewSession?.lastPrompt).toContain("exact affected file/path")
+    expect(storedReviewSession?.lastPrompt).toContain("smallest expected code/test fix")
+    expect(storedReviewSession?.lastPrompt).toContain("concrete verification command")
     expect(storedReviewSession?.lastPrompt).toContain("unverified icon/image/asset/component imports")
     expect(storedReviewSession?.lastPrompt).toContain("fabricated resource references")
 
@@ -2969,6 +2984,8 @@ describe("workflow harness MVP", () => {
     await harness.stateStore.updateRuntime(workflowId, {
       blockedFromPhase: "review",
       recoveryState: "idle",
+      requiresCodeChangeBeforeDevelopComplete: true,
+      ...(await buildCodeBaseline(baseDir)),
     })
 
     await harness.humanActionService.resume(workflowId, "fix")
@@ -2981,7 +2998,284 @@ describe("workflow harness MVP", () => {
     expect(workflow?.blockReason).toBeNull()
     expect(runtime?.pendingBlockedDecision).toBeNull()
     expect(runtime?.blockedFromPhase).toBeNull()
+    expect(runtime?.requiresCodeChangeBeforeDevelopComplete).toBe(true)
 
     await rm(baseDir, { recursive: true, force: true })
   })
+
+  it("keeps develop incomplete after review fix when develop.md only lists artifact files", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-fix-needs-code-change"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review fix 回到 develop 后，不能只改 develop.md 就完成。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Review failed without blocker severity and needs human decision",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      recoveryState: "idle",
+      requiresCodeChangeBeforeDevelopComplete: true,
+      ...(await buildCodeBaseline(baseDir)),
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    const developContent = [
+      "# 开发报告",
+      "",
+      "## 状态",
+      "COMPLETED",
+      "",
+      "## 修改文件",
+      "1. `develop.md`",
+      "2. `review.md`",
+      "",
+      "## 配套修改",
+      "仅更新报告，未改代码。",
+      "",
+      "## 自检结果",
+      "1. `npm run build`：通过。",
+      "",
+      "## 备注",
+      "无",
+      "",
+      "## 报告语言",
+      "中文",
+    ].join("\n")
+    await import("node:fs/promises").then(({ writeFile }) => writeFile(harness.workspace.phaseArtifactFile(workflowId, "develop"), `${developContent}\n`, "utf8"))
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(false)
+    expect(evaluation.missing).toContain("non_artifact_code_change_required_after_fix")
+    expect(evaluation.summary).toContain("必须先修复实现代码或测试")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("accepts review fix when code changes were made before resume", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-fix-prechanged-code"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 resume 之前已改代码不会被 baseline 吞掉。",
+    })
+
+    const baseline = await buildCodeBaseline(baseDir)
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Review failed without blocker severity and needs human decision",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      recoveryState: "idle",
+      requiresCodeChangeBeforeDevelopComplete: true,
+      ...baseline,
+    })
+
+    await writeFile(join(baseDir, "src", "prechanged.ts"), "export const beforeResume = 1\n", "utf8").catch(async () => {
+      await writeFile(join(baseDir, "prechanged.ts"), "export const beforeResume = 1\n", "utf8")
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    await writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      [
+        "# 开发报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 修改文件",
+        "1. `prechanged.ts`",
+        "",
+        "## 配套修改",
+        "代码在 resume 之前已经改好。",
+        "",
+        "## 自检结果",
+        "1. `bun test`：通过。",
+        "",
+        "## 备注",
+        "无",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n") + "\n",
+      "utf8",
+    )
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(true)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("keeps develop incomplete after test fix when listed code files do not change", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-test-fix-needs-code-change"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 test fix 回到 develop 后也必须有真实代码变更。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Test failed and needs human decision",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "test",
+      recoveryState: "idle",
+      requiresCodeChangeBeforeDevelopComplete: true,
+      ...(await buildCodeBaseline(baseDir)),
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    await import("node:fs/promises").then(({ writeFile }) => writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      [
+        "# 开发报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 修改文件",
+        "1. `src/cli.ts`",
+        "",
+        "## 配套修改",
+        "报告里写了代码文件，但实际工作区没有变化。",
+        "",
+        "## 自检结果",
+        "1. `bun test`：通过。",
+        "",
+        "## 备注",
+        "无",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n") + "\n",
+      "utf8",
+    ))
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(false)
+    expect(evaluation.missing).toContain("non_artifact_code_change_required_after_fix")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not require code change for develop artifact-only repair flows", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-develop-artifact-only-repair"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 develop artifact-only repair 不会被误判为需要代码变更。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Artifact-only repair blocked",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "develop",
+      recoveryState: "idle",
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+
+    expect(runtime?.requiresCodeChangeBeforeDevelopComplete).toBe(false)
+    expect(runtime?.codeChangeFingerprintBaseline).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not let develop.md-only changes satisfy fix loop develop completion", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-fix-docs-only"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 docs-only 改动不能通过 fix loop。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Review failed without blocker severity and needs human decision",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      recoveryState: "idle",
+      requiresCodeChangeBeforeDevelopComplete: true,
+      ...(await buildCodeBaseline(baseDir)),
+    })
+
+    await harness.humanActionService.resume(workflowId, "fix")
+
+    await import("node:fs/promises").then(({ writeFile }) => writeFile(
+      harness.workspace.phaseArtifactFile(workflowId, "develop"),
+      [
+        "# 开发报告",
+        "",
+        "## 状态",
+        "COMPLETED",
+        "",
+        "## 修改文件",
+        "1. `develop.md`",
+        "",
+        "## 配套修改",
+        "仅更新开发报告。",
+        "",
+        "## 自检结果",
+        "1. `bun test`：通过。",
+        "",
+        "## 备注",
+        "无",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n") + "\n",
+      "utf8",
+    ))
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const evaluation = await harness.artifactEvaluator.evaluate({ ...workflow!, phase: "develop" })
+
+    expect(evaluation.readyForNextPhase).toBe(false)
+    expect(evaluation.missing).toContain("non_artifact_code_change_required_after_fix")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
 })
