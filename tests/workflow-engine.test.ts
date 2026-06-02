@@ -49,6 +49,7 @@ describe.serial("workflow harness MVP", () => {
 
     expect(firstWorkflow?.phase).toBe("spec_refinement")
     expect(firstWorkflow?.status).toBe("in_progress")
+    expect(firstWorkflow?.maxIterations).toBe(10)
     expect(firstRuntime?.refinementAttempts).toBe(1)
     expect(firstAction).toBeNull()
     expect(specFile).toContain("# 规格精炼报告")
@@ -136,6 +137,26 @@ describe.serial("workflow harness MVP", () => {
     expect(developSession?.lastPrompt).toContain("[COMPLETION_POLICY]")
 
     await harness.sessionActivityMonitor.stop(workflowId)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("initializes ap-goal workflows with a thirty-iteration repair budget", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-ap-goal-init"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 ap-goal 初始化验证。",
+      presetMode: "ap-goal",
+    })
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const runtime = await harness.stateStore.getRuntime(workflowId)
+    expect(workflow?.maxIterations).toBe(30)
+    expect(runtime?.presetMode).toBe("ap-goal")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -958,9 +979,9 @@ describe.serial("workflow harness MVP", () => {
     expect(reviewArtifact).toContain("若存在 Reviewer Summaries")
     expect(reviewArtifact).toContain("Candidate Findings For Main Review")
     expect(reviewArtifact).toContain("Reviewer Conclusion Hint")
-    expect(reviewArtifact).toContain("[Consolidation Recommendation]")
+    expect(reviewArtifact).toContain("## 结论\nPASS\n\n[Consolidation Recommendation]")
     expect(reviewArtifact).toContain("recommended main conclusion:")
-    expect(reviewArtifact).toMatch(/## 结论\n(?:PASS|FAIL|待判定)/)
+    expect(reviewArtifact).toMatch(/## 结论\n(?:PASS|FAIL)/)
 
     await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })
@@ -997,6 +1018,87 @@ describe.serial("workflow harness MVP", () => {
 
     const finalContent = await Bun.file(reviewPath).text()
     expect(finalContent).toContain("## 结论\nPASS")
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("preserves manually edited review artifact content during repeated workflow sidecar syncs", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-sidecar-workflow-repeat-sync"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 review sidecar 重复同步保护验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：review sidecar 多次同步只更新 sidecar，不重置主 review 人工内容。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const reviewPath = harness.workspace.phaseArtifactFile(workflowId, "review")
+    const initialReviewArtifact = await Bun.file(reviewPath).text()
+    expect(initialReviewArtifact).toContain("<!-- AUTOPILOT_REVIEW_SIDE_CAR_START -->")
+
+    const manuallyEdited = initialReviewArtifact
+      .replace(/(## 发现的问题\n)[\s\S]*?(\n\n## 问题严重度汇总)/, (_match, prefix: string, suffix: string) => `${prefix}1. 人工补充：主 review 已确认组件复用边界。${suffix}`)
+      .replace(/(## 结论\n)[\s\S]*?(\n\n## 报告语言)/, (_match, prefix: string, suffix: string) => `${prefix}PASS\n\n人工备注：主 reviewer 已确认通过，等待 reviewer sidecar 最终同步。${suffix}`)
+      .replace(/(## Regression 风险评估\n)[\s\S]*?(\n\n## 结论)/, (_match, prefix: string, suffix: string) => `${prefix}低。人工补充：重点回归 hello-world 路由。${suffix}`)
+    await Bun.write(reviewPath, manuallyEdited)
+
+    const sidecar = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as {
+      workflowId: string
+      presetMode?: string | null
+      mergeMode?: string | null
+      completedAt?: string | null
+      readyToConsolidate?: boolean
+      updatedAt: string
+      entries: Array<{
+        reviewerSessionId: string
+        roleName: string
+        prompt: string
+        status: "pending" | "running" | "idle" | "failed" | "completed"
+        startedAt: string
+        updatedAt: string
+        lastSummary?: string | null
+        issueConfidence?: "high" | "medium" | "low" | null
+        issueSource?: string | null
+      }>
+    }
+    const now = new Date().toISOString()
+    const sidecarManager = new ReviewSidecarManager(harness.workspace)
+    await sidecarManager.write(workflowId, {
+      ...sidecar,
+      completedAt: now,
+      readyToConsolidate: true,
+      updatedAt: now,
+      entries: sidecar.entries.map((entry) => ({
+        ...entry,
+        status: "idle",
+        updatedAt: now,
+        lastSummary: `${entry.roleName}: no blocking issue found with high confidence`,
+        issueConfidence: "high",
+        issueSource: `${entry.roleName}: no blocking issue found with high confidence`,
+      })),
+    })
+
+    await sidecarManager.syncReviewArtifact(workflowId)
+
+    const finalReviewArtifact = await Bun.file(reviewPath).text()
+    expect(finalReviewArtifact).toContain("## 发现的问题\n1. 人工补充：主 review 已确认组件复用边界。")
+    expect(finalReviewArtifact).toContain("## Regression 风险评估\n低。人工补充：重点回归 hello-world 路由。")
+    expect(finalReviewArtifact).toContain("## 结论\nPASS\n\n人工备注：主 reviewer 已确认通过，等待 reviewer sidecar 最终同步。")
+    expect(finalReviewArtifact).toContain("## Reviewer Summaries")
+    expect(finalReviewArtifact).toContain("no blocking issue found with high confidence")
 
     await harness.sessionActivityMonitor.stop(workflowId)
     await rm(baseDir, { recursive: true, force: true })
@@ -1320,6 +1422,196 @@ describe.serial("workflow harness MVP", () => {
     const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
     expect(reviewArtifact).toContain("## 结论\nPASS")
     expect(reviewArtifact).toContain("## Consolidation Recommendation For Main Conclusion")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not autofill pending review sections when manual notes already exist", async () => {
+    const workspace = new DefaultWorkflowWorkspace(baseDir)
+    const manager = new ReviewSidecarManager(workspace)
+    const workflowId = "wf-review-pending-with-manual-notes"
+
+    await Bun.write(
+      workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "待判定",
+        "",
+        "人工备注：等待主 reviewer 最终确认。",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "示例范围",
+        "",
+        "## 发现的问题",
+        "待审查",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## 历史遗留观察项（非阻塞，可选）",
+        "无",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 结论",
+        "待判定",
+        "",
+        "人工备注：需要主 reviewer 最终确认。",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await manager.write(workflowId, {
+      workflowId,
+      presetMode: "verify",
+      mergeMode: "prefer_conservative",
+      completedAt: new Date().toISOString(),
+      readyToConsolidate: true,
+      updatedAt: new Date().toISOString(),
+      entries: [
+        {
+          reviewerSessionId: "r1",
+          roleName: "Verification Reviewer",
+          prompt: "prompt",
+          status: "idle",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSummary: "no blocking issue found with high confidence",
+          issueConfidence: "high",
+          issueSource: "no blocking issue found with high confidence",
+        },
+      ],
+    })
+
+    await manager.syncReviewArtifact(workflowId)
+
+    const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("## 状态\n待判定\n\n人工备注：等待主 reviewer 最终确认。")
+    expect(reviewArtifact).toContain("## 结论\n待判定\n\n人工备注：需要主 reviewer 最终确认。")
+    expect(reviewArtifact).not.toContain("[Consolidation Recommendation]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("preserves manual review content across repeated sidecar syncs", async () => {
+    const workspace = new DefaultWorkflowWorkspace(baseDir)
+    const manager = new ReviewSidecarManager(workspace)
+    const workflowId = "wf-review-sidecar-repeat-sync"
+
+    await Bun.write(
+      workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "待判定",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "示例范围",
+        "",
+        "## 发现的问题",
+        "1. 初始问题记录。",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## 历史遗留观察项（非阻塞，可选）",
+        "无",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 结论",
+        "待判定",
+        "",
+        "## 报告语言",
+        "中文",
+      ].join("\n"),
+    )
+
+    await manager.write(workflowId, {
+      workflowId,
+      presetMode: "verify",
+      mergeMode: "prefer_conservative",
+      completedAt: new Date().toISOString(),
+      readyToConsolidate: true,
+      updatedAt: new Date().toISOString(),
+      entries: [
+        {
+          reviewerSessionId: "r1",
+          roleName: "Verification Reviewer",
+          prompt: "prompt",
+          status: "idle",
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSummary: "no blocking issue found with high confidence",
+          issueConfidence: "high",
+          issueSource: "no blocking issue found with high confidence",
+        },
+      ],
+    })
+
+    await manager.syncReviewArtifact(workflowId)
+
+    await Bun.write(
+      workspace.phaseArtifactFile(workflowId, "review"),
+      [
+        "# 审查报告",
+        "",
+        "## 状态",
+        "PASS",
+        "",
+        "## 轮次",
+        "第 1 轮",
+        "",
+        "## 检查范围",
+        "示例范围",
+        "",
+        "## 发现的问题",
+        "1. 初始问题记录。",
+        "2. 人工补充：需要验证边界场景。",
+        "",
+        "## 问题严重度汇总",
+        "blocker: 0",
+        "",
+        "## 历史遗留观察项（非阻塞，可选）",
+        "无",
+        "",
+        "## Regression 风险评估",
+        "低",
+        "",
+        "## 结论",
+        "PASS",
+        "",
+        "人工备注：主 reviewer 已确认通过。",
+        "",
+        "## 报告语言",
+        "中文",
+        "",
+        "<!-- AUTOPILOT_REVIEW_SIDE_CAR_START -->",
+        "stale sidecar",
+        "<!-- AUTOPILOT_REVIEW_SIDE_CAR_END -->",
+      ].join("\n"),
+    )
+
+    await manager.syncReviewArtifact(workflowId)
+
+    const reviewArtifact = await Bun.file(workspace.phaseArtifactFile(workflowId, "review")).text()
+    expect(reviewArtifact).toContain("## 发现的问题\n1. 初始问题记录。\n2. 人工补充：需要验证边界场景。")
+    expect(reviewArtifact).toContain("## 结论\nPASS\n\n人工备注：主 reviewer 已确认通过。")
+    expect(reviewArtifact).toContain("## Reviewer Summaries")
+    expect(reviewArtifact).not.toContain("stale sidecar")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -1727,6 +2019,184 @@ describe.serial("workflow harness MVP", () => {
     expect(workflow?.phase).toBe("develop")
     expect(workflow?.status).toBe("in_progress")
     expect(workflow?.iteration).toBe(1)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("allows review blocker fix loops until the tenth iteration", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-review-loop-ten-iterations"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 review blocker 修复轮次上限提升到 10 次。",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "in_progress",
+      approved: true,
+      iteration: 8,
+    })
+    await harness.artifactEvaluator.setReviewReport(workflowId, "fail", true)
+    await harness.tickScheduler.requestTick(workflowId, "review blocker before max iteration")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow?.maxIterations).toBe(10)
+    expect(workflow?.phase).toBe("develop")
+    expect(workflow?.status).toBe("in_progress")
+    expect(workflow?.iteration).toBe(9)
+    expect(workflow?.blockReason).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("auto-loops ap-goal review failures back to develop regardless of severity", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-ap-goal-review-fail-loop"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 ap-goal review fail 自动回 develop。",
+      presetMode: "ap-goal",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "in_progress",
+      approved: true,
+      iteration: 0,
+    })
+    await harness.artifactEvaluator.setReviewReport(workflowId, "fail", false)
+    await harness.tickScheduler.requestTick(workflowId, "ap-goal review failed")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+    expect(workflow?.maxIterations).toBe(30)
+    expect(workflow?.phase).toBe("develop")
+    expect(workflow?.status).toBe("in_progress")
+    expect(workflow?.iteration).toBe(1)
+    expect(humanAction).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("auto-loops ap-goal test failures back to develop without human decision", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-ap-goal-test-fail-loop"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 ap-goal test fail 自动回 develop。",
+      presetMode: "ap-goal",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "test",
+      status: "in_progress",
+      approved: true,
+      iteration: 0,
+    })
+    await harness.artifactEvaluator.setTestReport(workflowId, "fail")
+    await harness.tickScheduler.requestTick(workflowId, "ap-goal test failed")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    const humanAction = await harness.humanActionStore.getCurrent(workflowId)
+    expect(workflow?.maxIterations).toBe(30)
+    expect(workflow?.phase).toBe("develop")
+    expect(workflow?.status).toBe("in_progress")
+    expect(workflow?.iteration).toBe(1)
+    expect(humanAction).toBeNull()
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("blocks ap-goal review fix loops only after the thirtieth iteration", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-ap-goal-review-loop-budget"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "验证 ap-goal review 修复预算为 30 次。",
+      presetMode: "ap-goal",
+    })
+
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "review",
+      status: "in_progress",
+      approved: true,
+      iteration: 29,
+    })
+    await harness.artifactEvaluator.setReviewReport(workflowId, "fail", true)
+    await harness.tickScheduler.requestTick(workflowId, "ap-goal review failed at budget")
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow?.maxIterations).toBe(30)
+    expect(workflow?.phase).toBe("blocked")
+    expect(workflow?.status).toBe("blocked")
+    expect(workflow?.blockReason).toBe("Exceeded maxIterations while fixing review issues")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("normalizes existing workflows with lower maxIterations to ten", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-existing-max-iterations-normalized"
+    const now = new Date().toISOString()
+
+    await writeJsonFile(harness.workspace.workflowStateFile(workflowId), {
+      workflowId,
+      phase: "blocked",
+      status: "blocked",
+      approved: true,
+      iteration: 4,
+      maxIterations: 3,
+      blockReason: "Exceeded maxIterations while fixing review issues",
+      activeSessionId: null,
+      phaseEnteredAt: now,
+      updatedAt: now,
+    })
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow?.maxIterations).toBe(10)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("normalizes existing ap-goal workflows with lower maxIterations to thirty", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-existing-ap-goal-max-iterations-normalized"
+    const now = new Date().toISOString()
+
+    await writeJsonFile(harness.workspace.workflowStateFile(workflowId), {
+      workflowId,
+      phase: "blocked",
+      status: "blocked",
+      approved: true,
+      iteration: 12,
+      maxIterations: 10,
+      blockReason: "Exceeded maxIterations while fixing review issues",
+      activeSessionId: null,
+      phaseEnteredAt: now,
+      updatedAt: now,
+    })
+    await writeJsonFile(harness.workspace.workflowRuntimeStateFile(workflowId), {
+      workflowId,
+      recoveryState: "idle",
+      consecutiveFailures: 0,
+      presetMode: "ap-goal",
+    })
+
+    const workflow = await harness.stateStore.getWorkflow(workflowId)
+    expect(workflow?.maxIterations).toBe(30)
 
     await rm(baseDir, { recursive: true, force: true })
   })

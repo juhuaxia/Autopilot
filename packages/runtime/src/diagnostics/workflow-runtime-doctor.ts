@@ -42,10 +42,23 @@ function detectBlocked(args: {
 }): WorkflowRuntimeDoctorResult | null {
   const { workflow, runtime, humanAction } = args
   const blockedFromPhase = runtime?.blockedFromPhase
+  const apGoalBudgetExhausted = runtime?.presetMode === "ap-goal"
+    && ((blockedFromPhase === "review" && workflow.blockReason === "Exceeded maxIterations while fixing review issues")
+      || (blockedFromPhase === "test" && workflow.blockReason === "Exceeded maxIterations while fixing test issues"))
   if (workflow.status !== "blocked" && humanAction?.action.type !== "blocked") {
     return null
   }
   if (blockedFromPhase === "review" || blockedFromPhase === "test") {
+    if (apGoalBudgetExhausted) {
+      return {
+        ok: false,
+        workflowId: workflow.workflowId,
+        status: "abnormal",
+        reason: `ap-goal workflow exhausted its automatic ${blockedFromPhase} repair budget and is now paused`,
+        recommendation: `Use workflow_resume with payload fix to continue from develop for another repair attempt, or workflow_resync if you want to rerun ${blockedFromPhase} against out-of-band edits.`,
+        recommendedTool: "workflow_resume",
+      }
+    }
     return {
       ok: false,
       workflowId: workflow.workflowId,

@@ -36,6 +36,28 @@ function buildBlockedAction(args: {
   }
 }
 
+function isApGoalMode(runtime: PhaseTransitionInput["runtime"]): boolean {
+  return runtime.presetMode === "ap-goal"
+}
+
+function shouldExceedIterationBudget(workflow: PhaseTransitionInput["workflow"]): boolean {
+  return workflow.iteration + 1 >= workflow.maxIterations
+}
+
+function buildAutoLoopBackToDevelop(input: PhaseTransitionInput, phase: "review" | "test", reason: string): TransitionAction {
+  if (shouldExceedIterationBudget(input.workflow)) {
+    return {
+      type: "recover",
+      reason: `Exceeded maxIterations while fixing ${phase} issues`,
+    }
+  }
+  return {
+    type: "advance_phase",
+    nextPhase: "develop",
+    reason,
+  }
+}
+
 function isArtifactRepairPending(
   runtime: PhaseTransitionInput["runtime"],
   phase: Extract<Phase, "develop" | "review" | "test">,
@@ -302,6 +324,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
               reason: buildArtifactOnlyRepairReason("review"),
             }
           }
+          if (isApGoalMode(runtime)) {
+            return buildAutoLoopBackToDevelop(input, "review", "ap-goal mode: review repeated the same unresolved signals; return to develop and repair the implementation or review evidence")
+          }
           return repeatedSignalEscalation
         }
       }
@@ -329,8 +354,11 @@ export class DefaultPhaseTransition implements PhaseTransition {
             reason: "Review-heavy node run failed and produced a report",
           }
         }
+        if (isApGoalMode(runtime)) {
+          return buildAutoLoopBackToDevelop(input, "review", "ap-goal mode: review failed; return to develop and repair the reported issues")
+        }
         if (artifact.hasBlockingSeverity) {
-      if (workflow.iteration + 1 >= workflow.maxIterations) {
+      if (shouldExceedIterationBudget(workflow)) {
         return {
           type: "recover",
           reason: "Exceeded maxIterations while fixing review issues",
@@ -378,6 +406,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
       if (artifact.reportStatus === "unknown" && workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const escalation = shouldEscalateUnknownConclusion(input, "review")
         if (escalation) {
+          if (isApGoalMode(runtime)) {
+            return buildAutoLoopBackToDevelop(input, "review", "ap-goal mode: review could not reach an explicit conclusion; return to develop and tighten the implementation or review evidence")
+          }
           return escalation
         }
         return {
@@ -407,6 +438,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
               reason: buildArtifactOnlyRepairReason("test"),
             }
           }
+          if (isApGoalMode(runtime)) {
+            return buildAutoLoopBackToDevelop(input, "test", "ap-goal mode: test repeated the same unresolved signals; return to develop and repair the implementation or test evidence")
+          }
           return repeatedSignalEscalation
         }
       }
@@ -426,6 +460,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
             nextPhase: "done",
             reason: "Verify node run failed and produced a report",
           }
+        }
+        if (isApGoalMode(runtime)) {
+          return buildAutoLoopBackToDevelop(input, "test", "ap-goal mode: test failed; return to develop and repair the reported issues")
         }
         const diagnostic = buildReportFailureBlockedDiagnostic(input, "test")
         return buildBlockedAction({
@@ -447,6 +484,9 @@ export class DefaultPhaseTransition implements PhaseTransition {
       if (artifact.reportStatus === "unknown" && workflow.status === "in_progress" && (session.status === "idle" || session.status === "stale")) {
         const escalation = shouldEscalateUnknownConclusion(input, "test")
         if (escalation) {
+          if (isApGoalMode(runtime)) {
+            return buildAutoLoopBackToDevelop(input, "test", "ap-goal mode: test could not reach an explicit conclusion; return to develop and tighten the implementation or test evidence")
+          }
           return escalation
         }
         return {

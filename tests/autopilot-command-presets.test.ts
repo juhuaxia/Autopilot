@@ -51,4 +51,14 @@ describe("autopilot command presets", () => {
 
     expect(payload).toContain("/ap-mode: verify")
   })
+
+  it("builds ap-goal preset directive template", () => {
+    const payload = buildAutopilotCommandPayload({
+      preset: "ap-goal",
+      prompt: "$ARGUMENTS",
+    })
+
+    expect(payload).toContain("/ap-mode: ap-goal")
+    expect(payload).not.toContain("/ap-start-at: develop")
+  })
 })

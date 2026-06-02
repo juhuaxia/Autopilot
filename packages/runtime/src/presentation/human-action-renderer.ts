@@ -129,11 +129,16 @@ function blockedWorkflowRecommendation(workflow: WorkflowState, runtime: Workflo
 } {
   const blockedFromPhase = runtime?.blockedFromPhase
   if (workflow.phase === "blocked" && (blockedFromPhase === "review" || blockedFromPhase === "test")) {
+    const apGoalBudgetExhausted = runtime?.presetMode === "ap-goal"
+      && ((blockedFromPhase === "review" && workflow.blockReason === "Exceeded maxIterations while fixing review issues")
+        || (blockedFromPhase === "test" && workflow.blockReason === "Exceeded maxIterations while fixing test issues"))
     return {
       tool: "workflow_resume or workflow_resync",
       payload: "fix",
       exactAction: `Run workflow_resume for ${workflow.workflowId} with payload fix to return to develop, or workflow_resync if you specifically want to rerun ${blockedFromPhase} against out-of-band edits.`,
-      channelState: "blocked review/test workflow waiting for manual fix/accept decision or explicit resync",
+      channelState: apGoalBudgetExhausted
+        ? "blocked ap-goal workflow after automatic repair budget exhaustion; waiting for explicit resume or resync"
+        : "blocked review/test workflow waiting for manual fix/accept decision or explicit resync",
     }
   }
 

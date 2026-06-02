@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5] - 2026-06-02
+
+### Added
+
+- Added `ap-goal`, a new public preset/slash command for goal-closing workflows that keep only refinement and plan as human checkpoints.
+
+### Changed
+
+- `ap-goal` now auto-loops `develop -> review -> test` by routing failed `review` and `test` results back to `develop` automatically instead of stopping for normal manual review/test decisions.
+- `ap-goal` workflows now use a `30`-iteration repair budget, and existing persisted `ap-goal` workflows are normalized up to that budget when loaded.
+- Blocked-state rendering and runtime doctor messaging now distinguish normal review/test manual decisions from `ap-goal` automatic repair budget exhaustion.
+
+### Fixed
+
+- Fixed review sidecar synchronization so stock template guidance still allows automatic conclusion hydration, while manual notes remain protected from overwrite.
+
+### Verification
+
+- `bun test tests/workflow-engine.test.ts tests/workflow-command-runner.test.ts tests/workflow-runtime-doctor.test.ts tests/workflow-lifecycle-e2e.test.ts tests/workflow-open-request.test.ts tests/workflow-plugin-entry.test.ts tests/autopilot-command-presets.test.ts tests/human-action-renderer.test.ts`
+
 ## [0.3.4] - 2026-05-27
 
 ### Added

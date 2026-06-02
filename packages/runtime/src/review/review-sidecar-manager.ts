@@ -8,6 +8,63 @@ export class ReviewSidecarManager {
 
   private static readonly SIDE_CAR_START = "<!-- AUTOPILOT_REVIEW_SIDE_CAR_START -->"
   private static readonly SIDE_CAR_END = "<!-- AUTOPILOT_REVIEW_SIDE_CAR_END -->"
+  private static readonly REVIEW_CONCLUSION_TEMPLATE_GUIDANCE = "若 reviewer sidecar 已存在，请结合 Reviewer Summaries、Candidate Findings For Main Review 与 Reviewer Conclusion Hint 输出统一结论；如主结论已由人工或主流程明确填写，则不要被 sidecar 提示覆盖。"
+
+  private escapeForRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  }
+
+  private findSectionRange(content: string, heading: string): { bodyStart: number, end: number } | null {
+    const headingRegex = new RegExp(`^${this.escapeForRegex(heading)}\\n`, "m")
+    const headingMatch = headingRegex.exec(content)
+    if (!headingMatch || headingMatch.index < 0) {
+      return null
+    }
+
+    const bodyStart = headingMatch.index + headingMatch[0].length
+    const remainder = content.slice(bodyStart)
+    const nextHeadingMatch = /^## /m.exec(remainder)
+    const end = bodyStart + (nextHeadingMatch?.index ?? remainder.length)
+    return { bodyStart, end }
+  }
+
+  private replaceSectionBody(content: string, heading: string, buildNextBody: (currentBody: string) => string | null): string {
+    const range = this.findSectionRange(content, heading)
+    if (!range) {
+      return content
+    }
+
+    const currentBody = content.slice(range.bodyStart, range.end)
+    const nextBody = buildNextBody(currentBody)
+    if (nextBody == null || nextBody === currentBody) {
+      return content
+    }
+
+    return `${content.slice(0, range.bodyStart)}${nextBody}${content.slice(range.end)}`
+  }
+
+  private isTemplatePendingBody(body: string, guidance?: string): boolean {
+    const trimmed = body.trim()
+    if (trimmed === "待判定") {
+      return true
+    }
+    return guidance ? trimmed === `待判定\n\n${guidance}` : false
+  }
+
+  private upsertSidecarBlock(content: string, block: string): string {
+    const startIndex = content.indexOf(ReviewSidecarManager.SIDE_CAR_START)
+    const endIndex = content.indexOf(ReviewSidecarManager.SIDE_CAR_END)
+
+    if (startIndex >= 0 && endIndex >= startIndex) {
+      const before = content.slice(0, startIndex).trimEnd()
+      const after = content.slice(endIndex + ReviewSidecarManager.SIDE_CAR_END.length).trimStart()
+      const merged = [before, block, after].filter((part) => part.length > 0).join("\n\n")
+      return `${merged}\n`
+    }
+
+    const stripped = content.trimEnd()
+    return stripped.length > 0 ? `${stripped}\n\n${block}\n` : `${block}\n`
+  }
 
   async write(workflowId: string, sidecar: ReviewSidecarFile): Promise<void> {
     const next = `${JSON.stringify(sidecar, null, 2)}\n`
@@ -189,43 +246,29 @@ export class ReviewSidecarManager {
       return conclusionHint.includes("FAIL") || conclusionHint.includes("needs-fix") ? "FAIL" : "PASS"
     })()
 
-    const statusHydrated = current.replace(
-      /(## 状态\n)(待判定(?:\n\n[\s\S]*?)?)(\n\n## 轮次)/m,
-      (_match, prefix: string, body: string, suffix: string) => {
-        if (!body.trim().startsWith("待判定")) {
-          return `${prefix}${body}${suffix}`
-        }
-        const candidateStatus = sidecar.readyToConsolidate
-          ? conclusionCandidate === "FAIL"
-            ? "FAIL"
-            : "PASS"
-          : "待判定"
-        return `${prefix}${candidateStatus}${suffix}`
-      },
-    )
+    let hydrated = this.replaceSectionBody(current, "## 状态", (body) => {
+      if (!this.isTemplatePendingBody(body)) {
+        return null
+      }
+      const candidateStatus = sidecar.readyToConsolidate
+        ? conclusionCandidate === "FAIL"
+          ? "FAIL"
+          : "PASS"
+        : "待判定"
+      return `${candidateStatus}\n\n`
+    })
 
-    const hydrated = statusHydrated.replace(
-      /(## 结论\n)(待判定(?:\n\n[\s\S]*?)?)(\n\n## 报告语言)/m,
-      (_match, prefix: string, body: string, suffix: string) => {
-        if (!body.trim().startsWith("待判定")) {
-          return `${prefix}${body}${suffix}`
-        }
-        const candidateConclusion = sidecar.readyToConsolidate
-          ? conclusionCandidate
-          : "待判定"
-        const recommendation = sidecar.readyToConsolidate
-          ? `${candidateConclusion}\n\n[Consolidation Recommendation]\n${conclusionHint}`
-          : body.trim()
-        return `${prefix}${recommendation}${suffix}`
-      },
-    )
+    hydrated = this.replaceSectionBody(hydrated, "## 结论", (body) => {
+      if (!this.isTemplatePendingBody(body, ReviewSidecarManager.REVIEW_CONCLUSION_TEMPLATE_GUIDANCE)) {
+        return null
+      }
+      if (!sidecar.readyToConsolidate) {
+        return body
+      }
+      return `${conclusionCandidate}\n\n[Consolidation Recommendation]\n${conclusionHint}\n\n`
+    })
 
-    const stripped = hydrated.replace(new RegExp(
-      `${ReviewSidecarManager.SIDE_CAR_START}[\\s\\S]*?${ReviewSidecarManager.SIDE_CAR_END}\\s*`,
-      "m",
-    ), "").trimEnd()
-
-    if (!stripped.includes("# 审查报告") || !stripped.includes("## 结论")) {
+    if (!hydrated.includes("# 审查报告") || !hydrated.includes("## 结论")) {
       return
     }
 
@@ -276,7 +319,7 @@ export class ReviewSidecarManager {
       ReviewSidecarManager.SIDE_CAR_END,
     ]
 
-    const nextContent = `${stripped}\n\n${lines.join("\n")}\n`
+    const nextContent = this.upsertSidecarBlock(hydrated, lines.join("\n"))
     if (current === nextContent) {
       return
     }

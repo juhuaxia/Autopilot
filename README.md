@@ -135,7 +135,14 @@ Sets the workflow mode.
 /ap-mode: standard
 /ap-mode: safe
 /ap-mode: debug
+/ap-mode: review-heavy
+/ap-mode: verify
+/ap-mode: ap-goal
 ```
+
+`ap-goal` keeps `refinement` and `plan` as the only human checkpoints.
+After that, if `review` or `test` fails, the workflow automatically returns to `develop` and keeps iterating until pass or until the repair budget is exhausted.
+The current `ap-goal` repair budget is `30` iterations.
 
 ### `/ap-start-at: develop`
 
@@ -156,6 +163,7 @@ These **do** appear in OpenCode command completion:
 - `/ap-safe`
 - `/ap-debug`
 - `/ap-review-heavy`
+- `/ap-goal`
 - `/ap-develop`
 - `/ap-verify`
 

@@ -4,6 +4,18 @@ import { readdir } from "node:fs/promises"
 import { readJsonFile, writeJsonFile } from "../shared/json-file"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { WorkflowStateStore } from "./workflow-state-store"
+import { normalizeMaxIterationsForPreset } from "./workflow-iteration-policy"
+
+function normalizeWorkflowState(state: WorkflowState, presetMode?: WorkflowRuntimeState["presetMode"] | null): WorkflowState {
+  const nextMaxIterations = normalizeMaxIterationsForPreset(state.maxIterations, presetMode)
+  if (state.maxIterations === nextMaxIterations) {
+    return state
+  }
+  return {
+    ...state,
+    maxIterations: nextMaxIterations,
+  }
+}
 
 export class FileSystemWorkflowStateStore implements WorkflowStateStore {
   constructor(public readonly workspace: WorkflowWorkspace) {}
@@ -25,11 +37,21 @@ export class FileSystemWorkflowStateStore implements WorkflowStateStore {
   }
 
   async getWorkflow(workflowId: string): Promise<WorkflowState | null> {
-    return readJsonFile<WorkflowState>(this.workspace.workflowStateFile(workflowId))
+    const state = await readJsonFile<WorkflowState>(this.workspace.workflowStateFile(workflowId))
+    if (!state) {
+      return null
+    }
+    const runtime = await readJsonFile<WorkflowRuntimeState>(this.workspace.workflowRuntimeStateFile(workflowId))
+    const normalized = normalizeWorkflowState(state, runtime?.presetMode ?? null)
+    if (normalized !== state) {
+      await writeJsonFile(this.workspace.workflowStateFile(workflowId), normalized)
+    }
+    return normalized
   }
 
   async saveWorkflow(state: WorkflowState): Promise<void> {
-    await writeJsonFile(this.workspace.workflowStateFile(state.workflowId), state)
+    const runtime = await readJsonFile<WorkflowRuntimeState>(this.workspace.workflowRuntimeStateFile(state.workflowId))
+    await writeJsonFile(this.workspace.workflowStateFile(state.workflowId), normalizeWorkflowState(state, runtime?.presetMode ?? null))
   }
 
   async updateWorkflow(
@@ -46,8 +68,10 @@ export class FileSystemWorkflowStateStore implements WorkflowStateStore {
       ...patch,
       updatedAt: new Date().toISOString(),
     }
-    await this.saveWorkflow(next)
-    return next
+    const runtime = await this.getRuntime(workflowId)
+    const normalized = normalizeWorkflowState(next, runtime?.presetMode ?? null)
+    await this.saveWorkflow(normalized)
+    return normalized
   }
 
   async getRuntime(workflowId: string): Promise<WorkflowRuntimeState | null> {

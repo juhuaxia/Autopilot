@@ -1,8 +1,10 @@
-export type AutopilotPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify"
+export type AutopilotPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify" | "ap-goal"
+
+type AutopilotCommandName = "ap-goal" | `ap-${Exclude<AutopilotPresetMode, "ap-goal">}`
 
 export type AutopilotPresetDefinition = {
   mode: AutopilotPresetMode
-  commandName: `ap-${AutopilotPresetMode}`
+  commandName: AutopilotCommandName
   description: string
   runtimePolicy: {
     refine?: string
@@ -205,6 +207,34 @@ export const AUTOPILOT_PRESET_DEFINITIONS: Record<AutopilotPresetMode, Autopilot
       summaryRules: ["Keep the final report concise.", "Report only evidence relevant to verification.", "State remaining uncertainty clearly."],
     },
   },
+  "ap-goal": {
+    mode: "ap-goal",
+    commandName: "ap-goal",
+    description: "Goal-closing workflow mode: keep refine/plan human-gated, then auto-loop develop/review/test until pass",
+    bridge: {
+      prompt: AUTOPILOT_PRESET_BRIDGE_PROMPT,
+      startAtDevelop: false,
+    },
+    runtimePolicy: {
+      understandingDepth: "deep",
+      forceDeepReviewAndTest: true,
+      refine: "[PRESET_REFINEMENT_POLICY] In ap-goal mode, ask only the minimum clarification needed to define a concrete success target and non-negotiable constraints before the autonomous execution loop begins.",
+      plan: "[PRESET_PLAN_POLICY] In ap-goal mode, produce a concrete execution plan that is directly actionable for repeated implement -> review -> test closure loops. Make regression scope and acceptance checkpoints explicit.",
+      develop: "[PRESET_DEVELOP_POLICY] In ap-goal mode, treat every return from review/test as an explicit repair loop. Fix the reported gaps directly, preserve request alignment, and keep iterating toward a final pass state instead of stopping for manual review decisions.",
+      review: "[PRESET_REVIEW_POLICY] In ap-goal mode, review rigorously and report concrete fixable findings. If the implementation is not ready, fail explicitly with actionable evidence so the workflow can route back to develop automatically.",
+      test: "[PRESET_TEST_POLICY] In ap-goal mode, verify requested behavior and regressions rigorously. If validation fails or remains inconclusive, state the failure explicitly with actionable evidence so the workflow can route back to develop automatically.",
+      reviewRoles: [
+        {
+          name: "Goal Reviewer",
+          focus: "Check whether the current implementation is actually sufficient to close the original goal, including regressions and missing acceptance evidence.",
+          priority: 1,
+          weight: 100,
+          mustReport: ["goal closure", "regression risk", "missing evidence"],
+        },
+      ],
+      summaryRules: ["Always end with one explicit PASS or FAIL conclusion.", "When failing, provide directly actionable findings for the next develop loop.", "Do not stop at ambiguity if a concrete deficiency can be stated."],
+    },
+  },
 }
 
 export function isAutopilotPresetMode(value: string): value is AutopilotPresetMode {
@@ -214,6 +244,7 @@ export function isAutopilotPresetMode(value: string): value is AutopilotPresetMo
     || value === "debug"
     || value === "review-heavy"
     || value === "verify"
+    || value === "ap-goal"
 }
 
 export function getAutopilotPresetDefinition(mode: AutopilotPresetMode): AutopilotPresetDefinition {

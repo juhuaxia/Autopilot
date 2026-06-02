@@ -5,7 +5,7 @@ export type PhaseDispatchAttempts = Partial<Record<"spec_refinement" | "plan" | 
 export type BlockedDecision = "fix" | "accept"
 
 export type WorkflowStartMode = "normal" | "direct-develop"
-export type WorkflowPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify"
+export type WorkflowPresetMode = "light" | "standard" | "safe" | "debug" | "review-heavy" | "verify" | "ap-goal"
 export type WorkflowRunKind = "full" | "review-heavy" | "develop" | "verify"
 
 export function normalizeWorkflowRunKind(value: unknown): WorkflowRunKind | undefined {

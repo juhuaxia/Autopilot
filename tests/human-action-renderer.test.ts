@@ -203,4 +203,34 @@ describe("human action renderer", () => {
     expect(output).toContain("Suggestion: if you are done with this workflow, you can end it before opening a new one.")
     expect(output).toContain("Exact action: Run workflow_back for wf-done when you want to close this workflow.")
   })
+
+  it("renders ap-goal blocked workflows as budget exhaustion instead of manual decision wait", () => {
+    const workflow: WorkflowState = {
+      workflowId: "wf-ap-goal-blocked",
+      phase: "blocked",
+      status: "blocked",
+      approved: true,
+      iteration: 30,
+      maxIterations: 30,
+      blockReason: "Exceeded maxIterations while fixing review issues",
+      activeSessionId: null,
+      phaseEnteredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    const runtime: WorkflowRuntimeState = {
+      workflowId: workflow.workflowId,
+      recoveryState: "idle",
+      waitingHumanActionId: null,
+      consecutiveFailures: 0,
+      presetMode: "ap-goal",
+      blockedFromPhase: "review",
+    }
+
+    const output = renderHumanActionBlock({ workflow, runtime, humanAction: null })
+
+    expect(output).toContain("Preset mode: ap-goal")
+    expect(output).toContain("Recommended payload: fix")
+    expect(output).toContain("automatic repair budget exhaustion")
+    expect(output).not.toContain("manual fix/accept decision")
+  })
 })

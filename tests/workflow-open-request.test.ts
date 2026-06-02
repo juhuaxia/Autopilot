@@ -407,6 +407,19 @@ describe("workflow open request", () => {
     }
   })
 
+  it("parses /ap-mode: ap-goal as a goal-closing preset", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-ap-mode-ap-goal-"))
+    try {
+      const result = await buildWorkflowOpenRequest("/ap-mode: ap-goal\n请持续修复直到 review 和 test 通过。", workspaceRoot)
+
+      expect(result.mode).toBe("ap-goal")
+      expect(result.prompt).toContain("请持续修复直到 review 和 test 通过。")
+      expect(result.userRequest).toContain("mode=ap-goal")
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
   it("parses directive payloads containing quotes and multiple lines without relying on JSON", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-directive-quotes-"))
     try {

@@ -2,6 +2,7 @@ import type { WorkflowState } from "../../../core/src/state/workflow-state"
 import type { WorkflowRuntimeState } from "../../../core/src/state/workflow-runtime-state"
 import type { FileSystemArtifactEvaluator } from "../artifacts/file-system-artifact-evaluator"
 import type { WorkflowStateStore } from "../state/workflow-state-store"
+import { getMaxIterationsForPreset } from "../state/workflow-iteration-policy"
 
 export async function initializeWorkflow(args: {
   workflowId: string
@@ -27,7 +28,7 @@ export async function initializeWorkflow(args: {
     status: "pending",
     approved: false,
     iteration: 0,
-    maxIterations: 3,
+    maxIterations: getMaxIterationsForPreset(presetMode),
     blockReason: null,
     activeSessionId: null,
     phaseEnteredAt: now,

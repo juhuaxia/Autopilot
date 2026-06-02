@@ -139,7 +139,14 @@ workflow_status -> workflow_resync -> workflow_attach
 /ap-mode: standard
 /ap-mode: safe
 /ap-mode: debug
+/ap-mode: review-heavy
+/ap-mode: verify
+/ap-mode: ap-goal
 ```
+
+`ap-goal` 模式会把 `spec_refinement` 和 `plan` 保留为仅有的人工介入点。
+在那之后，如果 `review` 或 `test` 失败，workflow 会自动回到 `develop` 修复并继续循环，直到通过或耗尽修复预算。
+当前 `ap-goal` 的自动修复预算是 `30` 次。
 
 ### `/ap-start-at: develop`
 
@@ -160,6 +167,7 @@ workflow_status -> workflow_resync -> workflow_attach
 - `/ap-safe`
 - `/ap-debug`
 - `/ap-review-heavy`
+- `/ap-goal`
 - `/ap-develop`
 - `/ap-verify`
 

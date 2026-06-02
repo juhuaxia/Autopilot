@@ -31,6 +31,31 @@ describe("workflow runtime doctor", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("explains ap-goal blocked review workflows as repair-budget exhaustion", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-runtime-doctor-ap-goal-blocked-"))
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-doctor-ap-goal-blocked"
+
+    await initializeWorkflow({ workflowId, stateStore: harness.stateStore, artifactEvaluator: harness.artifactEvaluator, userRequest: "blocked ap-goal doctor", presetMode: "ap-goal" })
+    await harness.stateStore.updateWorkflow(workflowId, {
+      phase: "blocked",
+      status: "blocked",
+      blockReason: "Exceeded maxIterations while fixing review issues",
+    })
+    await harness.stateStore.updateRuntime(workflowId, {
+      blockedFromPhase: "review",
+      presetMode: "ap-goal",
+    })
+
+    const result = await runWorkflowRuntimeDoctor({ harness, workflowId })
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain("exhausted its automatic review repair budget")
+    expect(result.recommendation).toContain("workflow_resume")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("diagnoses artifact repair loops", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-runtime-doctor-artifact-"))
     const harness = await createHarness(baseDir)

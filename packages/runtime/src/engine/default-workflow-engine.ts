@@ -202,6 +202,8 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
         lines.push("[AUTOPILOT_PRESET_POLICY] review-heavy mode prioritizes defect discovery and review confidence. Spend more effort on scrutiny, edge cases, and regression reasoning before treating implementation quality as acceptable.")
       } else if (presetMode === "verify") {
         lines.push("[AUTOPILOT_PRESET_POLICY] verify mode prioritizes validation evidence and test confidence. Keep implementation analysis focused on what is needed to prove pass/fail outcomes and regression safety.")
+      } else if (presetMode === "ap-goal") {
+        lines.push("[AUTOPILOT_PRESET_POLICY] ap-goal mode keeps refinement and plan as the only human gates. After that, drive autonomous closure: if review or test fails, produce actionable findings, route back to develop, fix them, and keep iterating until the workflow reaches a final pass state or exhausts its loop budget.")
       }
     }
 
@@ -516,8 +518,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       }
 
       case "advance_phase": {
-        const iterationPatch = workflow.phase === "review"
+        const incrementsIteration = (workflow.phase === "review" || workflow.phase === "test")
           && action.nextPhase === "develop"
+        const iterationPatch = incrementsIteration
           ? { iteration: workflow.iteration + 1 }
           : {}
         const advanceRuntimePatch = {
@@ -580,7 +583,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           payload: {
             from: workflow.phase,
             to: action.nextPhase,
-            iteration: workflow.phase === "review" && action.nextPhase === "develop"
+            iteration: incrementsIteration
               ? workflow.iteration + 1
               : workflow.iteration,
           },
