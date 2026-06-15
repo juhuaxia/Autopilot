@@ -2,6 +2,7 @@ import type { TickScheduler } from "../scheduling/tick-scheduler"
 import type { ReviewSidecarManager } from "../review/review-sidecar-manager"
 import type { WorkflowStateStore } from "../state/workflow-state-store"
 import type { SessionCoordinator, SessionDescriptor } from "./session-coordinator"
+import { createHash } from "node:crypto"
 
 export interface SessionActivityMonitor {
   start(workflowId: string): Promise<void>
@@ -10,6 +11,7 @@ export interface SessionActivityMonitor {
 
 export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
   private static readonly activeControllers = new Map<string, AbortController>()
+  private static readonly REVIEWER_SYNC_INTERVAL_MS = 500
   private readonly running = new Map<string, AbortController>()
 
   constructor(
@@ -19,6 +21,13 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
     private readonly reviewSidecarManager: ReviewSidecarManager,
     private readonly tickScheduler: TickScheduler,
   ) {}
+
+  private hashSummary(summary: string | null): string | null {
+    if (!summary?.trim()) {
+      return null
+    }
+    return createHash("sha256").update(summary.trim()).digest("hex").slice(0, 16)
+  }
 
   async start(workflowId: string): Promise<void> {
     const monitorKey = this.keyFor(workflowId)
@@ -73,14 +82,19 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
           continue
         }
 
-        for await (const event of this.sessionCoordinator.streamEvents(stored)) {
+        for await (const event of this.sessionCoordinator.streamEvents(stored, signal)) {
           if (signal.aborted) {
             return
           }
           if (event.type === "session.idle") {
             if (stored.kind === "reviewer") {
+              const latestStored = await this.sessionCoordinator.getStoredSession(workflowId, stored.sessionId)
               const summary = await this.sessionCoordinator.getLatestAssistantText(stored.sessionId)
-              await this.reviewSidecarManager.updateEntrySummary(workflowId, stored.sessionId, summary)
+              const nextHash = this.hashSummary(summary)
+              if (nextHash && nextHash !== latestStored?.lastAssistantSummaryHash) {
+                await this.reviewSidecarManager.updateEntrySummary(workflowId, stored.sessionId, summary)
+                await this.sessionCoordinator.updateStoredSession(workflowId, stored.sessionId, { lastAssistantSummaryHash: nextHash })
+              }
               await this.reviewSidecarManager.updateEntryStatus(workflowId, stored.sessionId, "idle")
               await this.reviewSidecarManager.markCompletedIfSettled(workflowId)
               const sidecar = await this.reviewSidecarManager.read(workflowId)
@@ -99,7 +113,6 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
                   return
                 }
               }
-              await this.reviewSidecarManager.syncReviewArtifact(workflowId)
               continue
             }
             const shouldStop = await this.requestTickSafely(workflowId, "session idle")
@@ -132,7 +145,6 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
                   return
                 }
               }
-              await this.reviewSidecarManager.syncReviewArtifact(workflowId)
               continue
             }
             const shouldStop = await this.requestTickSafely(workflowId, "session failed")
@@ -144,6 +156,12 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
 
       }
     } finally {
+      if (!signal.aborted) {
+        const activeController = DefaultSessionActivityMonitor.activeControllers.get(monitorKey)
+        if (activeController && activeController.signal === signal) {
+          activeController.abort()
+        }
+      }
       this.running.delete(monitorKey)
       const active = DefaultSessionActivityMonitor.activeControllers.get(monitorKey)
       if (active && active.signal === signal) {
@@ -155,7 +173,7 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
   private async runReviewerSyncLoop(workflowId: string, monitorKey: string, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       await this.syncReviewerSessions(workflowId, signal)
-      await this.sleep(100, signal)
+      await this.sleep(DefaultSessionActivityMonitor.REVIEWER_SYNC_INTERVAL_MS, signal)
     }
   }
 
@@ -166,26 +184,41 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
       return
     }
 
+    let sidecarNeedsSync = false
+    let sidecarReadyStateMayChange = false
+
     for (const session of reviewerSessions) {
       if (signal.aborted) {
         return
       }
       const latestStatus = await this.sessionCoordinator.getSessionStatus(session.sessionId)
       const normalizedStatus = latestStatus === "missing" ? "failed" : latestStatus
-      if (normalizedStatus !== session.status) {
+      const latestStoredSession = await this.sessionCoordinator.getStoredSession(workflowId, session.sessionId)
+      const sessionStatus = latestStoredSession?.status ?? session.status
+      const sessionSummaryHash = latestStoredSession?.lastAssistantSummaryHash ?? session.lastAssistantSummaryHash
+      if (normalizedStatus !== sessionStatus) {
         await this.sessionCoordinator.updateStoredSession(workflowId, session.sessionId, { status: normalizedStatus })
+        sidecarReadyStateMayChange = true
       }
 
       if (normalizedStatus === "idle") {
         const summary = await this.sessionCoordinator.getLatestAssistantText(session.sessionId)
-        if (summary) {
+        const nextHash = this.hashSummary(summary)
+        if (summary && nextHash && nextHash !== sessionSummaryHash) {
           await this.reviewSidecarManager.updateEntrySummary(workflowId, session.sessionId, summary)
+          await this.sessionCoordinator.updateStoredSession(workflowId, session.sessionId, { lastAssistantSummaryHash: nextHash })
+          sidecarNeedsSync = true
         }
       }
 
       if (normalizedStatus === "idle" || normalizedStatus === "failed") {
         await this.reviewSidecarManager.updateEntryStatus(workflowId, session.sessionId, normalizedStatus)
+        sidecarReadyStateMayChange = true
       }
+    }
+
+    if (!sidecarNeedsSync && !sidecarReadyStateMayChange) {
+      return
     }
 
     await this.reviewSidecarManager.markCompletedIfSettled(workflowId)
@@ -201,7 +234,9 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
         throw error
       }
     }
-    await this.reviewSidecarManager.syncReviewArtifact(workflowId)
+    if (sidecarNeedsSync || sidecarReadyStateMayChange || sidecar?.readyToConsolidate) {
+      await this.reviewSidecarManager.syncReviewArtifact(workflowId)
+    }
   }
 
   private keyFor(workflowId: string): string {
@@ -210,15 +245,16 @@ export class DefaultSessionActivityMonitor implements SessionActivityMonitor {
 
   private async sleep(ms: number, signal: AbortSignal): Promise<void> {
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => resolve(), ms)
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timeout)
-          resolve()
-        },
-        { once: true },
-      )
+      const onAbort = () => {
+        clearTimeout(timeout)
+        signal.removeEventListener("abort", onAbort)
+        resolve()
+      }
+      const timeout = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort)
+        resolve()
+      }, ms)
+      signal.addEventListener("abort", onAbort, { once: true })
     })
   }
 

@@ -3,6 +3,7 @@ import type { SessionEvent } from "../../../adapters/opencode/src/opencode-sessi
 import type { RelevantSessionState } from "../../../core/src/transitions/phase-transition"
 import type { OpencodeSessionClient } from "../../../adapters/opencode/src/opencode-session-client"
 import { readJsonFile, writeJsonFile } from "../shared/json-file"
+import { buildPromptStorageSummary } from "../shared/prompt-storage-summary"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { SessionCoordinator, SessionDescriptor } from "./session-coordinator"
 
@@ -131,6 +132,7 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
     })
     const currentStatus = await this.sessionClient.getSessionStatus(sessionId)
 
+    const promptStorage = buildPromptStorageSummary(prompt)
     const sessions = await this.loadSessions(workflowId)
     const next = sessions.map((session) => {
       if (session.sessionId !== sessionId) {
@@ -144,7 +146,9 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
           : currentStatus === "idle"
             ? "idle" as const
             : "running" as const,
-        lastPrompt: prompt,
+        lastPrompt: promptStorage.summary,
+        lastPromptHash: promptStorage.hash,
+        lastPromptLength: promptStorage.length,
         lastDispatchMode: injectResult.dispatchMode,
         lastStatusBeforeDispatch: injectResult.statusBefore,
       }
@@ -185,8 +189,8 @@ export class FileSystemSessionCoordinator implements SessionCoordinator {
     return this.sessionClient.getLatestAssistantText(sessionId)
   }
 
-  async *streamEvents(session: SessionDescriptor): AsyncIterable<SessionEvent> {
-    for await (const event of this.sessionClient.streamEvents(session.sessionId)) {
+  async *streamEvents(session: SessionDescriptor, signal?: AbortSignal): AsyncIterable<SessionEvent> {
+    for await (const event of this.sessionClient.streamEvents(session.sessionId, signal)) {
       yield event
     }
   }

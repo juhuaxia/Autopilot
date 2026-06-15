@@ -15,9 +15,13 @@ import { join } from "node:path"
 import type { WorkflowEventRecord } from "../events/workflow-event-store"
 import { readJsonFile } from "../shared/json-file"
 import type { ReviewSidecarFile } from "../review/review-sidecar"
+import { compressArtifactForPrompt, MAX_SOURCE_ARTIFACT_CHARS } from "../engine/prompt-artifact-compression"
+import { truncateInlineText } from "../shared/text-summary"
 import type { WorkflowState } from "../../../core/src/state/workflow-state"
 
 const ARCHIVE_KEEP_COUNT = 3
+const MAX_STATUS_SECTION_CHARS = 1200
+const MAX_STATUS_SUMMARY_CHARS = 600
 
 function assertWorkflowId(workflowId: string): void {
   if (!workflowId.trim()) {
@@ -83,6 +87,19 @@ async function resolveNodeChainContext(args: {
   return { parentWorkflowId, sourceWorkflowId, currentWorkflow }
 }
 
+function appendCompressedArtifactBlock(
+  lines: string[],
+  label: string,
+  phase: "spec_refinement" | "plan" | "develop" | "review" | "test",
+  content: string,
+): void {
+  const trimmed = content.trim()
+  if (!trimmed) {
+    return
+  }
+  lines.push("", label, compressArtifactForPrompt(trimmed, phase, MAX_SOURCE_ARTIFACT_CHARS))
+}
+
 async function buildReviewHeavyNodeRunRequest(args: {
   harness: Awaited<ReturnType<typeof import("../bootstrap/create-harness").createHarness>>
   sourceWorkflowId: string
@@ -103,7 +120,7 @@ async function buildReviewHeavyNodeRunRequest(args: {
   for (const phase of phases) {
     const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
     if (content.trim()) {
-      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+      appendCompressedArtifactBlock(lines, `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, phase, content)
     }
   }
   return lines.join("\n")
@@ -131,13 +148,13 @@ async function buildChainedDevelopRequest(args: {
   for (const phase of sourcePhases) {
     const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
     if (content.trim()) {
-      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+      appendCompressedArtifactBlock(lines, `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, phase, content)
     }
   }
   for (const phase of chainPhases) {
     const content = await readFile(args.harness.workspace.phaseArtifactFile(args.chainWorkflowId, phase), "utf8").catch(() => "")
     if (content.trim()) {
-      lines.push("", `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+      appendCompressedArtifactBlock(lines, `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, phase, content)
     }
   }
   return lines.join("\n")
@@ -170,14 +187,18 @@ async function buildNodeRunRequest(args: {
   for (const phase of phases) {
     const content = await readFile(args.harness.workspace.phaseArtifactFile(args.sourceWorkflowId, phase), "utf8").catch(() => "")
     if (content.trim()) {
-      lines.push("", `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+      appendCompressedArtifactBlock(lines, `[SOURCE_${phase.toUpperCase()}_ARTIFACT]`, phase, content)
     }
   }
   if (args.chainWorkflowId) {
+    const chainDevelopContent = await readFile(args.harness.workspace.phaseArtifactFile(args.chainWorkflowId, "develop"), "utf8").catch(() => "")
+    if (chainDevelopContent.trim()) {
+      appendCompressedArtifactBlock(lines, "[CHAIN_DEVELOP_ARTIFACT]", "develop", chainDevelopContent)
+    }
     for (const phase of ["review", "test"] as const) {
       const content = await readFile(args.harness.workspace.phaseArtifactFile(args.chainWorkflowId, phase), "utf8").catch(() => "")
       if (content.trim()) {
-        lines.push("", `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, content.trim())
+        appendCompressedArtifactBlock(lines, `[CHAIN_${phase.toUpperCase()}_ARTIFACT]`, phase, content)
       }
     }
   }
@@ -226,6 +247,10 @@ function extractSection(content: string, heading: string): string {
     ? afterHeading + nextHeading.index
     : content.length
   return content.slice(afterHeading, end).trim()
+}
+
+function summarizeStatusValue(value: string, maxChars = MAX_STATUS_SECTION_CHARS): string {
+  return truncateInlineText(value, maxChars, "\n[TRUNCATED] Status detail trimmed for focus.")
 }
 
 async function buildStatusEnhancements(args: {
@@ -317,7 +342,7 @@ async function buildStatusEnhancements(args: {
       lines.push(`Review sidecar entries: ${reviewSidecar.entries.map((entry) => `${entry.roleName}:${entry.status}`).join(" | ")}`)
       const summaries = reviewSidecar.entries.filter((entry) => entry.lastSummary)
       if (summaries.length > 0) {
-        lines.push(`Review sidecar summaries: ${summaries.map((entry) => `${entry.roleName}:${entry.lastSummary}`).join(" | ")}`)
+        lines.push(`Review sidecar summaries: ${summaries.map((entry) => `${entry.roleName}:${summarizeStatusValue(entry.lastSummary ?? "", MAX_STATUS_SUMMARY_CHARS)}`).join(" | ")}`)
       }
       lines.push(`Review ready to consolidate: ${reviewSidecar.readyToConsolidate ? "yes" : "no"}`)
     }
@@ -367,10 +392,10 @@ async function buildStatusEnhancements(args: {
     const changedFiles = extractSection(artifactContent, "## 修改文件")
     const selfCheck = extractSection(artifactContent, "## 自检结果")
     if (changedFiles) {
-      lines.push(`Code changes: ${changedFiles}`)
+      lines.push(`Code changes: ${summarizeStatusValue(changedFiles)}`)
     }
     if (selfCheck) {
-      lines.push(`Self-check: ${selfCheck}`)
+      lines.push(`Self-check: ${summarizeStatusValue(selfCheck)}`)
     }
   }
 
@@ -379,13 +404,13 @@ async function buildStatusEnhancements(args: {
     const issues = extractSection(artifactContent, "## 发现的问题")
     const regression = extractSection(artifactContent, "## Regression 风险评估")
     if (scope) {
-      lines.push(`Review scope: ${scope}`)
+      lines.push(`Review scope: ${summarizeStatusValue(scope)}`)
     }
     if (issues) {
-      lines.push(`Findings: ${issues}`)
+      lines.push(`Findings: ${summarizeStatusValue(issues)}`)
     }
     if (regression) {
-      lines.push(`Regression risk: ${regression}`)
+      lines.push(`Regression risk: ${summarizeStatusValue(regression)}`)
     }
     if (workflow.status === "in_progress" && evaluation.reportStatus === "unknown") {
       lines.push("Waiting reason: review artifact has not produced a final pass/fail conclusion yet.")
@@ -397,13 +422,13 @@ async function buildStatusEnhancements(args: {
     const failures = extractSection(artifactContent, "## 失败项")
     const regression = extractSection(artifactContent, "## Regression 验证")
     if (strategy) {
-      lines.push(`Test strategy: ${strategy}`)
+      lines.push(`Test strategy: ${summarizeStatusValue(strategy)}`)
     }
     if (failures) {
-      lines.push(`Failures: ${failures}`)
+      lines.push(`Failures: ${summarizeStatusValue(failures)}`)
     }
     if (regression) {
-      lines.push(`Regression verification: ${regression}`)
+      lines.push(`Regression verification: ${summarizeStatusValue(regression)}`)
     }
     if (workflow.status === "in_progress" && evaluation.reportStatus === "unknown") {
       lines.push("Waiting reason: test artifact has not produced a final pass/fail conclusion yet.")
@@ -416,16 +441,16 @@ async function buildStatusEnhancements(args: {
     const coreFiles = extractSection(artifactContent, "## 核心修改文件")
     const risk = extractSection(artifactContent, "## 风险评估")
     if (summary) {
-      lines.push(`Plan summary: ${summary}`)
+      lines.push(`Plan summary: ${summarizeStatusValue(summary)}`)
     }
     if (impact) {
-      lines.push(`Impact scope: ${impact}`)
+      lines.push(`Impact scope: ${summarizeStatusValue(impact)}`)
     }
     if (coreFiles) {
-      lines.push(`Core files: ${coreFiles}`)
+      lines.push(`Core files: ${summarizeStatusValue(coreFiles)}`)
     }
     if (risk) {
-      lines.push(`Plan risks: ${risk}`)
+      lines.push(`Plan risks: ${summarizeStatusValue(risk)}`)
     }
     if (workflow.status === "waiting_human") {
       lines.push("Approval preview: review the plan summary, impacted scope, core files, and risks before approving.")
@@ -459,6 +484,9 @@ type PendingClarification = {
   sourceWorkflowId?: string
   missingWorkflowId?: string
   mode?: string
+  startAt?: "develop"
+  artifactSeedRequest?: string
+  fullUserRequest?: string
 }
 
 async function buildWorkflowStatusResult(args: {
@@ -599,6 +627,16 @@ async function clearPendingClarification(
   }
 }
 
+function resolveClarificationRequests(pending: PendingClarification): {
+  userRequest: string
+  fullUserRequest: string
+} {
+  return {
+    userRequest: pending.artifactSeedRequest ?? pending.rawPayload,
+    fullUserRequest: pending.fullUserRequest ?? pending.rawPayload,
+  }
+}
+
 function buildIntentPromptFromChoice(choice: string, rawPayload: string): string {
   const normalized = choice.trim()
   if (normalized.includes("启动") || normalized.includes("workflow") || normalized.includes("开始")) {
@@ -674,6 +712,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           options: openRequest.clarificationOptions ?? [],
           sourceWorkflowId: workflowId,
           ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+          ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
+          artifactSeedRequest: openRequest.artifactSeedRequest,
+          fullUserRequest: openRequest.userRequest,
         })
         const outputLines = [openRequest.clarificationQuestion ?? "我需要先确认你的意图。"]
         if (openRequest.clarificationOptions && openRequest.clarificationOptions.length > 0) {
@@ -715,6 +756,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           ],
           missingWorkflowId: explicitSourceWorkflowId,
           ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+          ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
+          artifactSeedRequest: openRequest.artifactSeedRequest,
+          fullUserRequest: openRequest.userRequest,
         })
         return {
           ok: true,
@@ -761,6 +805,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             ],
             sourceWorkflowId: explicitSourceWorkflowId,
             ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+            ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
+            artifactSeedRequest: openRequest.artifactSeedRequest,
+            fullUserRequest: openRequest.userRequest,
           })
           return {
             ok: true,
@@ -797,6 +844,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           stateStore: harness.stateStore,
           artifactEvaluator: harness.artifactEvaluator,
           userRequest: nodeRequest,
+          fullUserRequest: nodeRequest,
           startAt: "develop",
           runKind: "develop",
           parentWorkflowId,
@@ -877,6 +925,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           stateStore: harness.stateStore,
           artifactEvaluator: harness.artifactEvaluator,
           userRequest: nodeRequest,
+          fullUserRequest: nodeRequest,
           startAt,
           ...(presetMode ? { presetMode } : {}),
           runKind: requestedNodeRunKind,
@@ -996,7 +1045,8 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             workflowId: targetId,
             stateStore: harness.stateStore,
             artifactEvaluator: harness.artifactEvaluator,
-            userRequest: openRequest.userRequest,
+            userRequest: openRequest.artifactSeedRequest,
+            fullUserRequest: openRequest.userRequest,
             ...(openRequest.mode ? { presetMode: openRequest.mode } : {}),
             ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
           })
@@ -1049,6 +1099,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
               options: ["1. 继续/恢复当前工作流", "2. 新建一个全新的工作流（保留旧工作流，后续不再自动路由到它）"],
               sourceWorkflowId: activeId,
               ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+              ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
+              artifactSeedRequest: openRequest.artifactSeedRequest,
+              fullUserRequest: openRequest.userRequest,
             })
 
             return {
@@ -1073,6 +1126,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
             ],
             sourceWorkflowId: primaryWorkflow?.workflowId ?? workflowId,
             ...(openRequest.mode ? { mode: openRequest.mode } : {}),
+            ...(openRequest.startAt ? { startAt: openRequest.startAt } : {}),
+            artifactSeedRequest: openRequest.artifactSeedRequest,
+            fullUserRequest: openRequest.userRequest,
           })
 
           return {
@@ -1121,11 +1177,14 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           const targetId = await harness.stateStore.getWorkflow(workflowId)
             ? resolvePresetWorkflowTargetId(workflowId)
             : generateDerivedWorkflowId(workflowId, "new")
+          const requests = resolveClarificationRequests(pending)
           await initializeWorkflow({
             workflowId: targetId,
             stateStore: harness.stateStore,
             artifactEvaluator: harness.artifactEvaluator,
-            userRequest: pending.rawPayload,
+            userRequest: requests.userRequest,
+            fullUserRequest: requests.fullUserRequest,
+            ...(pending.startAt ? { startAt: pending.startAt } : {}),
             ...(pending.mode ? { presetMode: pending.mode as any } : {}),
           })
           if (foregroundSessionId) {
@@ -1215,11 +1274,14 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           const targetId = await harness.stateStore.getWorkflow(workflowId)
             ? resolvePresetWorkflowTargetId(workflowId)
             : generateDerivedWorkflowId(workflowId, "new")
+          const requests = resolveClarificationRequests(pending)
           await initializeWorkflow({
             workflowId: targetId,
             stateStore: harness.stateStore,
             artifactEvaluator: harness.artifactEvaluator,
-            userRequest: originalPrompt ?? "",
+            userRequest: requests.userRequest || originalPrompt || "",
+            fullUserRequest: requests.fullUserRequest || originalPrompt || "",
+            ...(pending?.startAt ? { startAt: pending.startAt } : {}),
             ...(originalMode ? { presetMode: originalMode as any } : {}),
           })
           if (foregroundSessionId) {
@@ -1263,6 +1325,7 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           stateStore: harness.stateStore,
           artifactEvaluator: harness.artifactEvaluator,
           userRequest: intentPrompt,
+          fullUserRequest: intentPrompt,
         })
         if (foregroundSessionId) {
           await harness.stateStore.updateRuntime(workflowId, {

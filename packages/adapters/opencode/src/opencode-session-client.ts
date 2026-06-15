@@ -39,7 +39,7 @@ export interface OpencodeSessionClient {
     sessionId: string,
   ): Promise<"running" | "idle" | "failed" | "missing">
   getLatestAssistantText(sessionId: string): Promise<string | null>
-  streamEvents(sessionId: string): AsyncIterable<SessionEvent>
+  streamEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEvent>
 }
 
 export interface PluginSdkClient {
@@ -100,6 +100,7 @@ type InMemorySession = {
 }
 
 export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
+  private static readonly IDLE_POLL_MS = 50
   private readonly sessions = new Map<string, InMemorySession>()
   private readonly eventQueue = new Map<string, SessionEvent[]>()
 
@@ -170,8 +171,8 @@ export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
     return this.sessions.get(sessionId)?.lastAssistantText ?? null
   }
 
-  async *streamEvents(_sessionId: string): AsyncIterable<SessionEvent> {
-    while (true) {
+  async *streamEvents(_sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEvent> {
+    while (!signal?.aborted) {
       const queue = this.eventQueue.get(_sessionId) ?? []
       if (queue.length > 0) {
         const next = queue.shift()
@@ -182,7 +183,7 @@ export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
         }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await new Promise((resolve) => setTimeout(resolve, InMemoryOpencodeSessionClient.IDLE_POLL_MS))
     }
   }
 
@@ -194,6 +195,7 @@ export class InMemoryOpencodeSessionClient implements OpencodeSessionClient {
 }
 
 export class SdkOpencodeSessionClient implements OpencodeSessionClient {
+  private static readonly IDLE_POLL_MS = 50
   private readonly eventQueue = new Map<string, SessionEvent[]>()
   private readonly knownSessions = new Set<string>()
   private eventPumpStarted = false
@@ -317,9 +319,9 @@ export class SdkOpencodeSessionClient implements OpencodeSessionClient {
     }
   }
 
-  async *streamEvents(sessionId: string): AsyncIterable<SessionEvent> {
+  async *streamEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEvent> {
     this.ensureEventPump()
-    while (true) {
+    while (!signal?.aborted) {
       const queue = this.eventQueue.get(sessionId) ?? []
       if (queue.length > 0) {
         const next = queue.shift()
@@ -329,7 +331,7 @@ export class SdkOpencodeSessionClient implements OpencodeSessionClient {
           continue
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await new Promise((resolve) => setTimeout(resolve, SdkOpencodeSessionClient.IDLE_POLL_MS))
     }
   }
 
@@ -376,9 +378,18 @@ type HttpClientOptions = {
 }
 
 export class HttpOpencodeSessionClient implements OpencodeSessionClient {
+  private static readonly IDLE_POLL_MS = 50
+  private readonly eventQueue = new Map<string, SessionEvent[]>()
+  private readonly knownSessions = new Set<string>()
+  private eventPumpStarted = false
+  private eventPumpError: string | null = null
+
   constructor(private readonly options: HttpClientOptions) {}
 
-  async ensureSessionReady(_sessionId: string, _title: string): Promise<void> {}
+  async ensureSessionReady(sessionId: string, _title: string): Promise<void> {
+    this.ensureEventPump()
+    this.knownSessions.add(sessionId)
+  }
 
   async createSession(input: CreateSessionInput): Promise<{ sessionId: string }> {
     const data = await this.request<{
@@ -393,10 +404,14 @@ export class HttpOpencodeSessionClient implements OpencodeSessionClient {
       throw new Error("Opencode createSession response did not include id")
     }
 
+    this.ensureEventPump()
+    this.knownSessions.add(data.id)
     return { sessionId: data.id }
   }
 
   async injectPrompt(input: InjectPromptInput): Promise<InjectPromptResult> {
+    this.ensureEventPump()
+    this.knownSessions.add(input.sessionId)
     const body: Record<string, unknown> = {
       parts: [
         {
@@ -460,82 +475,129 @@ export class HttpOpencodeSessionClient implements OpencodeSessionClient {
     }
   }
 
-  async *streamEvents(_sessionId: string): AsyncIterable<SessionEvent> {
-    const headers: Record<string, string> = {}
-    if (this.options.password) {
-      const token = Buffer.from(`:${this.options.password}`).toString("base64")
-      headers.Authorization = `Basic ${token}`
+  async *streamEvents(_sessionId: string, _signal?: AbortSignal): AsyncIterable<SessionEvent> {
+    while (!_signal?.aborted) {
+      if (this.eventPumpError) {
+        yield {
+          type: "session.error",
+          sessionId: _sessionId,
+          payload: { message: this.eventPumpError },
+        }
+        return
+      }
+      const queue = this.eventQueue.get(_sessionId) ?? []
+      if (queue.length > 0) {
+        const next = queue.shift()
+        this.eventQueue.set(_sessionId, queue)
+        if (next) {
+          yield next
+          continue
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, HttpOpencodeSessionClient.IDLE_POLL_MS))
     }
+  }
 
-    const response = await fetch(new URL("/event", this.options.baseUrl), {
-      headers,
-    })
-
-    if (!response.ok || !response.body) {
-      throw new Error(`Opencode event stream failed: ${response.status} ${response.statusText}`)
+  private ensureEventPump(): void {
+    if (this.eventPumpStarted) {
+      return
     }
+    this.eventPumpError = null
+    this.eventPumpStarted = true
+    void this.startEventPump()
+  }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    while (true) {
-      const result = await reader.read()
-      if (result.done) {
-        break
+  private async startEventPump(): Promise<void> {
+    try {
+      const headers: Record<string, string> = {}
+      if (this.options.password) {
+        const token = Buffer.from(`:${this.options.password}`).toString("base64")
+        headers.Authorization = `Basic ${token}`
       }
 
-      buffer += decoder.decode(result.value, { stream: true })
-      const chunks = buffer.split("\n\n")
-      buffer = chunks.pop() ?? ""
+      const response = await fetch(new URL("/event", this.options.baseUrl), {
+        headers,
+      })
 
-      for (const chunk of chunks) {
-        const dataLine = chunk
-          .split("\n")
-          .find((line) => line.startsWith("data:"))
+      if (!response.ok || !response.body) {
+        throw new Error(`Opencode event stream failed: ${response.status} ${response.statusText}`)
+      }
 
-        if (!dataLine) {
-          continue
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const result = await reader.read()
+        if (result.done) {
+          throw new Error("Opencode event stream closed unexpectedly")
         }
 
-        const raw = dataLine.slice(5).trim()
-        if (!raw) {
-          continue
-        }
+        buffer += decoder.decode(result.value, { stream: true })
+        const chunks = buffer.split("\n\n")
+        buffer = chunks.pop() ?? ""
 
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(raw)
-        } catch {
-          continue
-        }
+        for (const chunk of chunks) {
+          const dataLine = chunk
+            .split("\n")
+            .find((line) => line.startsWith("data:"))
 
-        if (!parsed || typeof parsed !== "object") {
-          continue
-        }
+          if (!dataLine) {
+            continue
+          }
 
-        const event = parsed as {
-          type?: string
-          properties?: Record<string, unknown>
-        }
-        const sessionID = typeof event.properties?.sessionID === "string"
-          ? event.properties.sessionID
-          : undefined
+          const raw = dataLine.slice(5).trim()
+          if (!raw) {
+            continue
+          }
 
-        if (sessionID !== _sessionId || !event.type) {
-          continue
-        }
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(raw)
+          } catch {
+            continue
+          }
 
-        const nextEvent: SessionEvent = {
-          type: event.type,
-          sessionId: sessionID,
+          if (!parsed || typeof parsed !== "object") {
+            continue
+          }
+
+          const event = parsed as {
+            type?: string
+            properties?: Record<string, unknown>
+          }
+          const sessionID = typeof event.properties?.sessionID === "string"
+            ? event.properties.sessionID
+            : undefined
+
+          if (!sessionID || !event.type || !this.knownSessions.has(sessionID)) {
+            continue
+          }
+
+          this.enqueue(sessionID, {
+            type: event.type,
+            sessionId: sessionID,
+            ...(event.properties ? { payload: event.properties } : {}),
+          })
         }
-        if (event.properties) {
-          nextEvent.payload = event.properties
-        }
-        yield nextEvent
+      }
+    } catch (error) {
+      this.eventPumpError = error instanceof Error ? error.message : String(error)
+      this.eventPumpStarted = false
+      for (const sessionId of this.knownSessions) {
+        this.enqueue(sessionId, {
+          type: "session.error",
+          sessionId,
+          payload: { message: this.eventPumpError },
+        })
       }
     }
+  }
+
+  private enqueue(sessionId: string, event: SessionEvent): void {
+    const queue = this.eventQueue.get(sessionId) ?? []
+    queue.push(event)
+    this.eventQueue.set(sessionId, queue)
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

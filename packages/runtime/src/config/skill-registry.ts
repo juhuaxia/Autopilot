@@ -1,7 +1,11 @@
-import { access, readdir } from "node:fs/promises"
+import { access, readdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, extname, isAbsolute, join, resolve } from "node:path"
 import { readFile } from "node:fs/promises"
+import { summarizeMarkdownContent } from "../shared/text-summary"
+
+const MAX_SKILL_SUMMARY_CHARS = 1200
+const skillFileCache = new Map<string, { mtimeMs: number, content: string }>()
 
 function expandPath(input: string): string {
   if (input === "~") {
@@ -114,7 +118,7 @@ export async function loadResolvedSkillContents(
 
   for (const skill of resolved) {
     try {
-      const content = await readFile(skill.path, "utf8")
+      const content = await readSkillFileWithCache(skill.path)
       results.push({
         ...skill,
         content: content.trim(),
@@ -125,4 +129,40 @@ export async function loadResolvedSkillContents(
   }
 
   return results
+}
+
+export async function loadResolvedSkillSummaries(
+  registry: Map<string, string>,
+  skillNames: string[],
+): Promise<Array<{ name: string, path: string, summary: string }>> {
+  const resolved = resolveSkillPaths(registry, skillNames)
+  const results: Array<{ name: string, path: string, summary: string }> = []
+
+  for (const skill of resolved) {
+    try {
+      const content = await readSkillFileWithCache(skill.path)
+      results.push({
+        ...skill,
+        summary: summarizeMarkdownContent(content.trim(), MAX_SKILL_SUMMARY_CHARS),
+      })
+    } catch {
+      continue
+    }
+  }
+
+  return results
+}
+
+async function readSkillFileWithCache(filePath: string): Promise<string> {
+  const fileStat = await stat(filePath)
+  const cached = skillFileCache.get(filePath)
+  if (cached && cached.mtimeMs === fileStat.mtimeMs) {
+    return cached.content
+  }
+  const content = await readFile(filePath, "utf8")
+  skillFileCache.set(filePath, {
+    mtimeMs: fileStat.mtimeMs,
+    content,
+  })
+  return content
 }

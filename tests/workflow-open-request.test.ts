@@ -212,6 +212,30 @@ describe("workflow open request", () => {
     }
   })
 
+  it("builds a smaller artifact seed summary than the full open request for large docs", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-artifact-seed-"))
+    try {
+      await mkdir(join(workspaceRoot, "docs"), { recursive: true })
+      await writeFile(join(workspaceRoot, "docs", "requirement.md"), `# Requirement\n\n${"A".repeat(14000)}`)
+
+      const result = await buildWorkflowOpenRequest(
+        JSON.stringify({
+          prompt: "请基于需求文档推进 workflow。",
+          docPaths: ["docs/requirement.md"],
+          projectContext: `项目上下文\n\n${"B".repeat(3000)}`,
+        }),
+        workspaceRoot,
+      )
+
+      expect(result.userRequest).toContain("[DOC_CONTENT]")
+      expect(result.artifactSeedRequest).toContain("[DOC_SUMMARY]")
+      expect(result.artifactSeedRequest).not.toContain("[DOC_CONTENT]")
+      expect(result.artifactSeedRequest.length).toBeLessThan(result.userRequest.length)
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
   it("renders image summary when image summary service succeeds", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "workflow-open-image-summary-"))
     try {

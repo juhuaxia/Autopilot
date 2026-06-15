@@ -8,6 +8,11 @@ import type { ImageSummaryService } from "../images/image-summary-service"
 import type { WorkflowRunKind } from "../../../core/src/state/workflow-runtime-state"
 
 const MAX_DOC_CHARS = 12_000
+const MAX_ARTIFACT_SEED_CHARS = 6_000
+const MAX_ARTIFACT_SEED_DOCS = 3
+const MAX_ARTIFACT_SEED_TEXT_TARGETS = 3
+const MAX_ARTIFACT_SEED_IMAGE_TARGETS = 3
+const MAX_ARTIFACT_SEED_SNIPPET_CHARS = 800
 const MAX_CANDIDATE_DOCS = 20
 const MAX_SCAN_DEPTH = 3
 const MAX_READ_TARGET_IMAGES = 5
@@ -51,6 +56,7 @@ export type ContinuationIntent = {
 
 export interface WorkflowOpenRequest {
   userRequest: string
+  artifactSeedRequest: string
   prompt: string
   startAt?: "develop"
   mode?: WorkflowPresetMode
@@ -302,6 +308,82 @@ const normalizeDocSnippet = (content: string): string => {
   return `${normalized.slice(0, MAX_DOC_CHARS)}\n... (truncated)`
 }
 
+const normalizeArtifactSeedSnippet = (content: string): string => {
+  const normalized = content.replace(/\r\n/g, "\n").trim()
+  if (normalized.length <= MAX_ARTIFACT_SEED_SNIPPET_CHARS) {
+    return normalized
+  }
+  return `${normalized.slice(0, MAX_ARTIFACT_SEED_SNIPPET_CHARS).trimEnd()}\n... (summary truncated)`
+}
+
+const trimArtifactSeedBody = (content: string): string => {
+  if (content.length <= MAX_ARTIFACT_SEED_CHARS) {
+    return content
+  }
+  return `${content.slice(0, MAX_ARTIFACT_SEED_CHARS).trimEnd()}\n\n[ARTIFACT_SEED_TRUNCATED] Initial request summary trimmed for artifact focus.`
+}
+
+function buildArtifactSeedRequest(args: {
+  prompt: string
+  projectContext?: string
+  docSummaries: Array<{ path: string; content?: string; error?: string }>
+  readTargets: Array<{ raw: string; path: string; kind: ReadTargetKind }>
+  textReadTargets: Array<{ path: string; content: string }>
+  imageTargetSummaries: Array<{ path: string; summary?: string; error?: string }>
+}): string {
+  const lines = [
+    "[USER_REQUEST_SUMMARY]",
+    args.prompt || "请先基于项目和需求文档完成 spec_refinement。",
+  ]
+
+  if (args.projectContext) {
+    lines.push("", "[PROJECT_CONTEXT_SUMMARY]", normalizeArtifactSeedSnippet(args.projectContext))
+  }
+
+  if (args.docSummaries.length > 0) {
+    lines.push("", "[REFERENCE_DOCS]")
+    lines.push(...args.docSummaries.map((item) => `- ${item.path}`))
+    for (const doc of args.docSummaries.slice(0, MAX_ARTIFACT_SEED_DOCS)) {
+      lines.push("", `[DOC_PATH] ${doc.path}`)
+      if (doc.content) {
+        lines.push("[DOC_SUMMARY]", normalizeArtifactSeedSnippet(doc.content))
+      } else if (doc.error) {
+        lines.push(`[DOC_READ_ERROR] ${doc.error}`)
+      }
+    }
+    if (args.docSummaries.length > MAX_ARTIFACT_SEED_DOCS) {
+      lines.push("", `[DOC_SUMMARY_NOTE] only the first ${MAX_ARTIFACT_SEED_DOCS} docs include inline summaries; use [REFERENCE_DOCS] for the full path list.`)
+    }
+  }
+
+  if (args.readTargets.length > 0) {
+    lines.push("", "[READ_TARGETS]")
+    lines.push(...args.readTargets.map((target) => `- type=${target.kind} path=${target.path}`))
+    lines.push("[READ_TARGETS_POLICY] These targets were explicitly marked with @read(...). Preserve them as explicit source hints in refinement and plan, while relying on structured outputs instead of blindly re-reading them later.")
+  }
+
+  for (const target of args.textReadTargets.slice(0, MAX_ARTIFACT_SEED_TEXT_TARGETS)) {
+    lines.push("", `[READ_TARGET_PATH] ${target.path}`, "[READ_TARGET_SUMMARY]", normalizeArtifactSeedSnippet(target.content))
+  }
+  if (args.textReadTargets.length > MAX_ARTIFACT_SEED_TEXT_TARGETS) {
+    lines.push("", `[READ_TARGET_NOTE] only the first ${MAX_ARTIFACT_SEED_TEXT_TARGETS} text read targets include inline summaries.`)
+  }
+
+  for (const image of args.imageTargetSummaries.slice(0, MAX_ARTIFACT_SEED_IMAGE_TARGETS)) {
+    lines.push("", `[READ_TARGET_IMAGE_PATH] ${image.path}`)
+    if (image.summary?.trim()) {
+      lines.push("[READ_TARGET_IMAGE_SUMMARY]", normalizeArtifactSeedSnippet(image.summary))
+    } else if (image.error) {
+      lines.push(`[READ_TARGET_IMAGE_ERROR] ${image.error}`)
+    }
+  }
+  if (args.imageTargetSummaries.length > MAX_ARTIFACT_SEED_IMAGE_TARGETS) {
+    lines.push("", `[READ_TARGET_IMAGE_NOTE] only the first ${MAX_ARTIFACT_SEED_IMAGE_TARGETS} image read targets include inline summaries.`)
+  }
+
+  return trimArtifactSeedBody(lines.join("\n"))
+}
+
 const toRelativePath = (workspaceRoot: string, absolutePath: string): string => {
   const normalizedRoot = workspaceRoot.endsWith("/") ? workspaceRoot : `${workspaceRoot}/`
   return absolutePath.startsWith(normalizedRoot)
@@ -535,6 +617,8 @@ export async function buildWorkflowOpenRequestWithOptions(
   const readTargets = extractReadTargets(prompt)
   const textReadTargets: Array<{ path: string; content: string }> = []
   const imageReadTargets: Array<{ path: string }> = []
+  const docSummaries: Array<{ path: string; content?: string; error?: string }> = []
+  const imageTargetSummaries: Array<{ path: string; summary?: string; error?: string }> = []
 
   const lines: string[] = []
   if (mode) {
@@ -565,12 +649,20 @@ export async function buildWorkflowOpenRequestWithOptions(
       const absolutePath = toAbsolutePath(rawPath, workspaceRoot)
       try {
         const content = await readFile(absolutePath, "utf8")
+        docSummaries.push({
+          path: rawPath,
+          content: normalizeDocSnippet(content),
+        })
         lines.push("")
         lines.push(`[DOC_PATH] ${rawPath}`)
         lines.push("[DOC_CONTENT]")
         lines.push(normalizeDocSnippet(content))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        docSummaries.push({
+          path: rawPath,
+          error: message,
+        })
         lines.push("")
         lines.push(`[DOC_PATH] ${rawPath}`)
         lines.push(`[DOC_READ_ERROR] ${message}`)
@@ -649,6 +741,12 @@ export async function buildWorkflowOpenRequestWithOptions(
     })
 
     for (const result of imageResults) {
+      imageTargetSummaries.push({
+        path: result.path,
+        ...(result.ok && result.summary?.trim()
+          ? { summary: condenseImageSummary(result.summary.trim()) }
+          : { error: result.error ?? "image understanding unavailable in current environment" }),
+      })
       lines.push("")
       lines.push(`[READ_TARGET_IMAGE_PATH] ${result.path}`)
       if (result.ok && result.summary?.trim()) {
@@ -660,8 +758,18 @@ export async function buildWorkflowOpenRequestWithOptions(
     }
   }
 
+  const artifactSeedRequest = buildArtifactSeedRequest({
+    prompt: prompt || "请先基于项目和需求文档完成 spec_refinement。",
+    ...(projectContext ? { projectContext } : {}),
+    docSummaries,
+    readTargets,
+    textReadTargets,
+    imageTargetSummaries,
+  })
+
   return {
     userRequest: lines.join("\n"),
+    artifactSeedRequest,
     prompt,
     ...(startAt ? { startAt } : {}),
     ...(mode ? { mode } : {}),

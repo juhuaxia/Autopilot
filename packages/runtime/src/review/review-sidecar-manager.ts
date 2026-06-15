@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
 import { readJsonFile } from "../shared/json-file"
 import type { WorkflowWorkspace } from "../workspace/workflow-workspace"
 import type { ReviewSidecarEntry, ReviewSidecarFile } from "./review-sidecar"
@@ -130,6 +131,7 @@ export class ReviewSidecarManager {
       ? {
           ...entry,
           lastSummary: summary,
+          lastSummaryHash: this.hashSummary(summary),
           ...(summary ? this.parseStructuredIssue(summary) : {}),
           updatedAt: new Date().toISOString(),
         }
@@ -174,6 +176,13 @@ export class ReviewSidecarManager {
       ...(confidence ? { issueConfidence: confidence } : {}),
       ...(source ? { issueSource: source } : {}),
     }
+  }
+
+  private hashSummary(summary: string | null): string | null {
+    if (!summary?.trim()) {
+      return null
+    }
+    return createHash("sha256").update(summary.trim()).digest("hex").slice(0, 16)
   }
 
   async markCompletedIfSettled(workflowId: string): Promise<void> {

@@ -196,6 +196,135 @@ describe.serial("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("keeps full workflow-open context available to the first refinement dispatch while storing a smaller artifact seed", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-refinement-full-context"
+    const fullRequest = [
+      "[USER_PROMPT]",
+      "请基于需求文档推进 workflow。",
+      "",
+      "[REFERENCE_DOCS]",
+      "[DOC_PATH] docs/requirement.md",
+      "[DOC_CONTENT]",
+      `# Requirement\n\n${"A".repeat(5000)}`,
+    ].join("\n")
+    const artifactSeed = [
+      "[USER_REQUEST_SUMMARY]",
+      "请基于需求文档推进 workflow。",
+      "",
+      "[REFERENCE_DOCS]",
+      "- docs/requirement.md",
+      "",
+      "[DOC_PATH] docs/requirement.md",
+      "[DOC_SUMMARY]",
+      "# Requirement\n\n摘要版内容",
+    ].join("\n")
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: artifactSeed,
+      fullUserRequest: fullRequest,
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+
+    const artifact = await readFile(harness.workspace.phaseArtifactFile(workflowId, "spec_refinement"), "utf8")
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(artifact).toContain("[DOC_SUMMARY]")
+    expect(artifact).not.toContain("[DOC_CONTENT]")
+    expect(stored?.lastPrompt).toContain("[FULL_USER_REQUEST_CONTEXT]")
+    expect(stored?.lastPrompt).toContain("[DOC_CONTENT]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("keeps full workflow-open context available to the first direct-develop dispatch", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-direct-develop-full-context"
+    const fullRequest = [
+      "[USER_PROMPT]",
+      "请直接进入 develop。",
+      "",
+      "[REFERENCE_DOCS]",
+      "[DOC_PATH] docs/requirement.md",
+      "[DOC_CONTENT]",
+      `# Requirement\n\n${"D".repeat(5000)}`,
+    ].join("\n")
+    const artifactSeed = [
+      "[USER_REQUEST_SUMMARY]",
+      "请直接进入 develop。",
+      "",
+      "[REFERENCE_DOCS]",
+      "- docs/requirement.md",
+      "",
+      "[DOC_PATH] docs/requirement.md",
+      "[DOC_SUMMARY]",
+      "# Requirement\n\n摘要版内容",
+    ].join("\n")
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: artifactSeed,
+      fullUserRequest: fullRequest,
+      startAt: "develop",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[FULL_USER_REQUEST_CONTEXT]")
+    expect(stored?.lastPrompt).toContain("[DOC_CONTENT]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("does not keep reinjecting full initial context on later direct-develop redispatches", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-direct-develop-single-full-context"
+    const fullRequest = [
+      "[USER_PROMPT]",
+      "请直接进入 develop。",
+      "",
+      "[DOC_CONTENT]",
+      `# Requirement\n\n${"E".repeat(3000)}`,
+    ].join("\n")
+    const artifactSeed = "[USER_REQUEST_SUMMARY]\n请直接进入 develop。"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: artifactSeed,
+      fullUserRequest: fullRequest,
+      startAt: "develop",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "first direct develop dispatch")
+    let session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    let stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).toContain("[FULL_USER_REQUEST_CONTEXT]")
+
+    await harness.stateStore.updateRuntime(workflowId, {
+      phaseDispatchAttempts: {
+        develop: 1,
+      },
+    })
+    await harness.tickScheduler.requestTick(workflowId, "later direct develop dispatch")
+    session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+    expect(stored?.lastPrompt).not.toContain("[FULL_USER_REQUEST_CONTEXT]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("falls back to truncation when preferred and standard sections are missing", async () => {
     const harness = await createHarness(baseDir)
     const workflowId = "wf-missing-sections-fallback"
@@ -1167,6 +1296,84 @@ describe.serial("workflow harness MVP", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("does not duplicate reviewer sidecar entries across repeated reviewer sync ticks", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-reviewer-summary-dedup"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 reviewer summary 去重验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：reviewer summary 未变化时不重复改写 sidecar。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+    await harness.tickScheduler.requestTick(workflowId, "reviewer summary settle")
+
+    const sidecarBefore = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as {
+      entries: Array<{ reviewerSessionId: string; updatedAt: string }>
+    }
+    expect(sidecarBefore.entries.length).toBeGreaterThan(0)
+
+    await harness.tickScheduler.requestTick(workflowId, "reviewer summary dedup check")
+
+    const sidecarAfter = await Bun.file(harness.workspace.reviewSidecarFile(workflowId)).json() as {
+      entries: Array<{ reviewerSessionId: string; updatedAt: string }>
+    }
+    expect(sidecarAfter.entries.length).toBe(sidecarBefore.entries.length)
+    expect(new Set(sidecarAfter.entries.map((entry) => entry.reviewerSessionId)).size).toBe(sidecarAfter.entries.length)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("stores reviewer prompts as lighter role-focused prompts than the main review prompt", async () => {
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-reviewer-prompt-lightweight"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 reviewer prompt 轻量化验证。",
+      presetMode: "review-heavy",
+    })
+
+    await harness.sessionActivityMonitor.start(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：reviewer prompt 比主 review prompt 更轻量。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+    await harness.artifactEvaluator.markDevelopmentComplete(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "develop complete")
+
+    const mainSession = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const mainStored = mainSession.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, mainSession.sessionId) : null
+    const allSessions = await harness.sessionCoordinator.listStoredSessions(workflowId)
+    const reviewerSession = allSessions.find((session) => session.kind === "reviewer") ?? null
+
+    expect(mainStored?.lastPromptLength).toBeGreaterThan(0)
+    expect(reviewerSession?.lastPromptLength).toBeGreaterThan(0)
+    expect(reviewerSession?.lastPrompt).toContain("[PHASE] review_reviewer")
+    expect(reviewerSession?.lastPrompt).toContain("[REVIEWER_POLICY]")
+    expect(reviewerSession?.lastPrompt).toContain("[REVIEW_POLICY]")
+    expect((reviewerSession?.lastPromptLength ?? 0)).toBeLessThan(mainStored?.lastPromptLength ?? 0)
+
+    await harness.sessionActivityMonitor.stop(workflowId)
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("dispatches a one-shot consolidation prompt when review sidecar becomes ready", async () => {
     const harness = await createHarness(baseDir)
     const workflowId = "wf-review-consolidation"
@@ -1744,6 +1951,45 @@ describe.serial("workflow harness MVP", () => {
     expect(stored?.lastPrompt).toContain("ui-review")
     expect(stored?.lastPrompt).toContain(join(skillRoot, "ui-review.md"))
     expect(stored?.lastPrompt).toContain("Focus on visual consistency and regression risk.")
+
+    await rm(skillRoot, { recursive: true, force: true })
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  it("caches long skill content loads while keeping full skill content in prompts", async () => {
+    const skillRoot = await mkdtemp(join(tmpdir(), "workflow-phase-skills-summary-"))
+    await Bun.write(join(skillRoot, "frontend-design.md"), `# frontend-design\n\n- Reuse existing components first.\n\n${"A".repeat(4000)}`)
+
+    await writeJsonFile(join(baseDir, "autopilot.json"), {
+      skillRoots: [skillRoot],
+      phases: {
+        develop: { requiredSkills: ["frontend-design"] },
+      },
+    })
+
+    const harness = await createHarness(baseDir)
+    const workflowId = "wf-skill-summary-only"
+
+    await initializeWorkflow({
+      workflowId,
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "新增 skill summary 验证。",
+    })
+
+    await harness.tickScheduler.requestTick(workflowId, "workflow started")
+    await harness.tickScheduler.requestTick(workflowId, "refinement self-repair completed")
+    await harness.humanActionService.answer(workflowId, { q_acceptance_criteria: "验收标准：required skill 默认走摘要。" })
+    await harness.tickScheduler.requestTick(workflowId, "enter plan")
+    await harness.humanActionService.approve(workflowId)
+    await harness.tickScheduler.requestTick(workflowId, "enter develop")
+
+    const session = await harness.sessionCoordinator.getRelevantSession(workflowId)
+    const stored = session.sessionId ? await harness.sessionCoordinator.getStoredSession(workflowId, session.sessionId) : null
+
+    expect(stored?.lastPrompt).toContain("[SKILL_CONTENT]")
+    expect(stored?.lastPrompt).toContain("Reuse existing components first.")
+    expect(stored?.lastPrompt).toContain("A".repeat(500))
 
     await rm(skillRoot, { recursive: true, force: true })
     await rm(baseDir, { recursive: true, force: true })

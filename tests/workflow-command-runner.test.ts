@@ -51,7 +51,9 @@ describe("workflow command runner", () => {
     expect(content).toContain("请基于需求文档推进 workflow")
     expect(content).toContain("[REFERENCE_DOCS]")
     expect(content).toContain("[DOC_PATH]")
+    expect(content).toContain("[DOC_SUMMARY]")
     expect(content).toContain("Need full refine -> plan -> develop -> review -> test")
+    expect(content).not.toContain("[DOC_CONTENT]")
 
     await rm(docsDir, { recursive: true, force: true })
     await rm(baseDir, { recursive: true, force: true })
@@ -306,6 +308,10 @@ describe("workflow command runner", () => {
     expect(runtime?.runKind).toBe("review-heavy")
     expect(runtime?.parentWorkflowId).toBe("done-feature")
     expect(runtime?.sourceWorkflowId).toBe("done-feature")
+
+    const content = await Bun.file(harness.workspace.phaseArtifactFile(nodeRun!.workflowId, "spec_refinement")).text()
+    expect(content).toContain("[SOURCE_SPEC_REFINEMENT_ARTIFACT]")
+    expect(content).toContain("[COMPRESSED] Artifact compressed by key sections for prompt focus.")
 
     await rm(baseDir, { recursive: true, force: true })
   })
@@ -868,6 +874,53 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("includes chain develop artifact when creating verify from a develop node run", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-from-develop-chain-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    await initializeWorkflow({
+      workflowId: "root-verify-chain",
+      stateStore: harness.stateStore,
+      artifactEvaluator: harness.artifactEvaluator,
+      userRequest: "根 workflow。",
+    })
+    await harness.stateStore.updateWorkflow("root-verify-chain", {
+      phase: "done",
+      status: "completed",
+      approved: true,
+    })
+
+    const developResult = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: "root-verify-chain",
+      payload: JSON.stringify({ prompt: "先修复。", runKind: "develop" }),
+    })
+    expect(developResult.ok).toBe(true)
+
+    const developWorkflows = await harness.stateStore.listWorkflows?.() ?? []
+    const developNode = developWorkflows.find((w) => w.workflowId.startsWith("root-verify-chain-develop-"))
+    expect(developNode).toBeDefined()
+
+    const verifyResult = await runner.run({
+      harness,
+      command: "workflow-open",
+      workflowId: developNode!.workflowId,
+      payload: JSON.stringify({ prompt: "基于最新修复做验证。", runKind: "verify" }),
+    })
+    expect(verifyResult.ok).toBe(true)
+
+    const workflows = await harness.stateStore.listWorkflows?.() ?? []
+    const verifyNode = workflows.find((w) => w.workflowId.startsWith(`${developNode!.workflowId}-verify-`))
+    expect(verifyNode).toBeDefined()
+
+    const content = await Bun.file(harness.workspace.phaseArtifactFile(verifyNode!.workflowId, "spec_refinement")).text()
+    expect(content).toContain("[CHAIN_DEVELOP_ARTIFACT]")
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
   it("stores preset mode when opening a verify workflow", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-verify-preset-"))
     const harness = await createHarness(baseDir)
@@ -1366,6 +1419,56 @@ describe("workflow command runner", () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
+  it("preserves artifact seed context when creating a new workflow after clarification", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-clarify-seed-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+
+    try {
+      await mkdir(join(baseDir, "docs"), { recursive: true })
+      const docPath = join(baseDir, "docs", "requirement.md")
+      await writeFile(docPath, `# Requirement\n\n${"A".repeat(9000)}`)
+
+      await initializeWorkflow({
+        workflowId: "wf-command-clarify-seed-active",
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "已有进行中的 workflow。",
+      })
+
+      const openResult = await runner.run({
+        harness,
+        command: "workflow-open",
+        workflowId: "wf-command-clarify-seed",
+        payload: JSON.stringify({
+          prompt: "请基于需求文档推进 workflow。",
+          docPaths: [docPath],
+          projectContext: "项目上下文：这是一个 clarification seed 保真测试。",
+          mode: "safe",
+        }),
+      })
+
+      expect(openResult.output).toContain("你想继续还是新开")
+
+      const answerResult = await runner.run({
+        harness,
+        command: "workflow-answer",
+        workflowId: "wf-command-clarify-seed",
+        payload: JSON.stringify({ lifecycle_decision: "new" }),
+      })
+
+      const newWorkflowId = answerResult.workflowId
+      expect(newWorkflowId).toBeTruthy()
+
+      const content = await Bun.file(harness.workspace.phaseArtifactFile(newWorkflowId!, "spec_refinement")).text()
+      expect(content).toContain("[DOC_SUMMARY]")
+      expect(content).toContain("项目上下文：这是一个 clarification seed 保真测试。")
+      expect(content).not.toContain("[DOC_CONTENT]")
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it("renders richer status details for in-progress phases", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-status-"))
     const harness = await createHarness(baseDir)
@@ -1451,6 +1554,60 @@ describe("workflow command runner", () => {
       })
 
       expect(attachResult.output).not.toContain("Doctor hint: run ap_doctor for a minimal diagnosis and next-step suggestion.")
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it("trims overly long status sections while preserving the status label", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "workflow-command-runner-status-trim-"))
+    const harness = await createHarness(baseDir)
+    const runner = new DefaultWorkflowCommandRunner()
+    const workflowId = "wf-command-status-trim"
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "新增状态裁剪验证。",
+      })
+      await harness.stateStore.updateWorkflow(workflowId, {
+        phase: "review",
+        status: "in_progress",
+      })
+      await Bun.write(
+        harness.workspace.phaseArtifactFile(workflowId, "review"),
+        [
+          "# 审查报告",
+          "",
+          "## 状态",
+          "进行中",
+          "",
+          "## 轮次",
+          "第 1 轮",
+          "",
+          "## 检查范围",
+          "A".repeat(3000),
+          "",
+          "## 发现的问题",
+          "B".repeat(3000),
+          "",
+          "## Regression 风险评估",
+          "C".repeat(3000),
+        ].join("\n"),
+      )
+
+      const result = await runner.run({
+        harness,
+        command: "workflow-status",
+        workflowId,
+      })
+
+      expect(result.output).toContain("Review scope:")
+      expect(result.output).toContain("Findings:")
+      expect(result.output).toContain("Regression risk:")
+      expect(result.output).toContain("[TRUNCATED] Status detail trimmed for focus.")
     } finally {
       await rm(baseDir, { recursive: true, force: true })
     }

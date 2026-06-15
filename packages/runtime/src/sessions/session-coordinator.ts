@@ -14,8 +14,11 @@ export interface SessionDescriptor {
   status: "running" | "idle" | "failed"
   title?: string
   lastPrompt?: string
+  lastPromptHash?: string
+  lastPromptLength?: number
   lastDispatchMode?: string
   lastStatusBeforeDispatch?: "running" | "idle" | "failed" | "missing"
+  lastAssistantSummaryHash?: string
 }
 
 export interface SessionCoordinator {
@@ -34,5 +37,5 @@ export interface SessionCoordinator {
   updateStoredSession(workflowId: string, sessionId: string, patch: Partial<SessionDescriptor>): Promise<void>
   getSessionStatus(sessionId: string): Promise<"running" | "idle" | "failed" | "missing">
   getLatestAssistantText(sessionId: string): Promise<string | null>
-  streamEvents(session: SessionDescriptor): AsyncIterable<SessionEvent>
+  streamEvents(session: SessionDescriptor, signal?: AbortSignal): AsyncIterable<SessionEvent>
 }
