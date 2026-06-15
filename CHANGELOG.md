@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6] - 2026-06-15
+
+### Changed
+
+- Reduced workflow prompt/storage token usage by summarizing stored prompts, status sections, and workflow-open artifact seed inputs while keeping first-dispatch context complete.
+- Compressed chained/node-run artifact injection and summarized long skill/status content to keep prompt payloads focused without changing workflow phase ordering.
+- Reviewer sidecar/session synchronization now avoids redundant summary rewrites and keeps lightweight reviewer prompt metadata for recovery/status views.
+
+### Fixed
+
+- Fixed clarification -> create-new-workflow flows so structured workflow-open context (`artifactSeedRequest`, full initial request, direct-develop start hints) is preserved instead of degrading to raw payload only.
+- Fixed HTTP/OpenCode event streaming so event-pump failures surface as explicit `session.error` signals instead of silently stalling workflow progression.
+- Fixed prompt/reviewer persistence metadata so legacy recovery paths continue working when new hash/length fields are absent.
+
+### Verification
+
+- `bun test tests/opencode-session-client.test.ts tests/workflow-command-runner.test.ts tests/workflow-open-request.test.ts tests/prompt-storage-summary.test.ts tests/workflow-engine.test.ts tests/workflow-state-recovery.test.ts`
+
 ## [0.3.5] - 2026-06-02
 
 ### Added
