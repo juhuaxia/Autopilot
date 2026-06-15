@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { createHarness } from "../packages/runtime/src/bootstrap/create-harness"
+import { initializeWorkflow } from "../packages/runtime/src/bootstrap/initialize-workflow"
 import workflowPlugin from "../packages/runtime/src/plugin/workflow-plugin-entry"
 
 describe("workflow state recovery", () => {
@@ -50,6 +52,56 @@ describe("workflow state recovery", () => {
 
       const backOutput = await reloadedPlugin.tool.workflow_back.execute({ workflowId })
       expect(backOutput).toContain(`Returned from workflow channel for ${workflowId}`)
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  })
+
+  it("re-attaches with legacy review sidecar entries missing prompt hash metadata", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "workflow-state-recovery-sidecar-"))
+    const workflowId = "wf-legacy-sidecar-done"
+    const harnessDir = join(workspaceDir, ".workflow-harness")
+    const harness = await createHarness(harnessDir)
+    const plugin = await workflowPlugin({ directory: workspaceDir })
+
+    try {
+      await initializeWorkflow({
+        workflowId,
+        stateStore: harness.stateStore,
+        artifactEvaluator: harness.artifactEvaluator,
+        userRequest: "已完成的基础任务。",
+      })
+      await harness.stateStore.updateWorkflow(workflowId, {
+        phase: "done",
+        status: "completed",
+        approved: true,
+      })
+
+      const nodeRunOutput = await plugin.tool.workflow_open.execute({
+        workflowId,
+        payload: JSON.stringify({
+          prompt: "请从 review 角度更严格地检查这个改动。",
+          mode: "review-heavy",
+        }),
+      })
+      const nodeWorkflowId = nodeRunOutput.match(/Workflow: ([^\n]+)/)?.[1]?.trim()
+      expect(nodeWorkflowId).toBeTruthy()
+
+      const sidecarFile = join(harnessDir, "workflows", nodeWorkflowId!, "review-sidecar.json")
+      const sidecar = JSON.parse(await readFile(sidecarFile, "utf8")) as {
+        entries: Array<Record<string, unknown>>
+      }
+      sidecar.entries = sidecar.entries.map((entry) => {
+        const { promptHash: _promptHash, promptLength: _promptLength, lastSummaryHash: _lastSummaryHash, ...rest } = entry
+        return rest
+      })
+      await writeFile(sidecarFile, `${JSON.stringify(sidecar, null, 2)}\n`, "utf8")
+
+      const reloadedPlugin = await workflowPlugin({ directory: workspaceDir })
+      const attachOutput = await reloadedPlugin.tool.workflow_attach.execute({ workflowId: nodeWorkflowId! })
+
+      expect(attachOutput).toContain(`Workflow: ${nodeWorkflowId!}`)
+      expect(attachOutput).toContain("Review sidecar entries:")
     } finally {
       await rm(workspaceDir, { recursive: true, force: true })
     }

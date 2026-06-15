@@ -43,6 +43,7 @@ interface PhaseArtifactState {
   summary?: string
   questions?: Question[]
   initialRequest?: string
+  fullInitialRequest?: string
   requiresApproval?: boolean
   reportStatus?: "pass" | "fail" | "unknown"
   hasBlockingSeverity?: boolean
@@ -919,6 +920,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     workflowId: string,
     userRequest: string | undefined,
     startAt: "spec_refinement" | "develop" | "review" | "test",
+    fullUserRequest?: string,
   ): Promise<void> {
     const existing = await readJsonFile<ArtifactStateFile>(this.workspace.artifactStateFile(workflowId))
     if (existing) {
@@ -926,6 +928,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
     }
 
     const normalizedUserRequest = this.normalizeUserRequest(userRequest)
+    const normalizedFullUserRequest = this.normalizeUserRequest(fullUserRequest ?? userRequest)
     const syntheticRefinement = this.buildRefinementArtifact({
       userRequest: normalizedUserRequest,
       ...(startAt === "develop"
@@ -948,6 +951,7 @@ export class FileSystemArtifactEvaluator implements ArtifactEvaluator {
         summary: startAt === "review" || startAt === "test" ? "Audit source context prepared" : "Need clarification before planning",
         questions: startAt === "review" || startAt === "test" ? [] : refinementQuestions,
         initialRequest: normalizedUserRequest,
+        fullInitialRequest: normalizedFullUserRequest,
       },
       plan: {
         valid: true,

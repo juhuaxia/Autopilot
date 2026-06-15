@@ -8,12 +8,28 @@ import { loadResolvedSkillContents, resolveSkillPaths } from "../config/skill-re
 import { resolveEffectiveUnderstandingDepth, type UnderstandingDepth, type WorkflowConfigPhase } from "../config/workflow-config"
 import { compressArtifactForPrompt, MAX_CURRENT_ARTIFACT_CHARS, MAX_SOURCE_ARTIFACT_CHARS } from "./prompt-artifact-compression"
 import { readJsonFile } from "../shared/json-file"
+import { buildPromptStorageSummary } from "../shared/prompt-storage-summary"
 import { buildWorkspaceCodeFingerprint, buildWorkspaceCodeSnapshot, resolveCodeScanRoot } from "../shared/workspace-code-fingerprint"
 import type { ReviewSidecarEntry, ReviewSidecarFile } from "../review/review-sidecar"
 import type { WorkflowEngine, WorkflowEngineDeps } from "./workflow-engine"
 
 export class DefaultWorkflowEngine implements WorkflowEngine {
   constructor(private readonly deps: WorkflowEngineDeps) {}
+
+  private static readonly CORE_POLICY = "Autofill what can be safely inferred. Preserve existing content. Ask humans only for genuine ambiguity. Keep section headings unchanged. Never import or reference icons, images, assets, or components unless you have verified they already exist in the repository. Do not invent import paths, filenames, asset names, or icon exports. Never guess existence from naming habits; verify every named reference and treat unverified outcomes as evidence insufficient, not pass."
+
+  private static readonly QUALITY_POLICY = "Before concluding develop/review/test, identify the repository's available validation commands and quality gates, choose the checks relevant to the actual change scope, and run them when feasible. Record exactly what was executed, what was skipped, and why. Do not claim PASS without sufficient evidence. If a relevant check fails, conclude FAIL or evidence insufficient."
+
+  private static readonly REVIEWER_OUTPUT_POLICY = "Return a concise reviewer summary focused on your assigned role. Include any concrete FAIL findings with exact file/path, smallest expected fix, and one verification command when possible. If no blocking issue is found, say so explicitly with confidence."
+
+  private static readonly UNDERSTANDING_GUIDANCE_BY_DEPTH: Record<UnderstandingDepth, string> = {
+    lightweight:
+      "Focus on extracting core intent and explicit request boundary. Do not trace full dependency chains or perform deep codebase analysis unless ambiguity is detected. Keep analysis scoped to what is directly referenced in the user request. Avoid over-analysis of unrelated modules.",
+    standard:
+      "Trace direct dependencies, parent components, and immediate import chains relevant to the change. Identify impact scope on neighboring modules. Verify changes against existing patterns in the codebase. Document which files were examined and why they are relevant.",
+    deep:
+      "Perform comprehensive dependency tracing including parent components, parent routes, stores, composables, services, helpers, shared modules, API contracts, permission boundaries, and cross-module impacts. Document full call chains, state flow, and data dependencies. Map upstream/downstream effects. Record all traced files and justify each inclusion/exclusion in the analysis scope.",
+  }
 
   private async writeReviewSidecar(args: {
     workflowId: string
@@ -32,6 +48,34 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
         updatedAt: new Date().toISOString(),
       })),
     })
+  }
+
+  private buildReviewerPrompt(args: {
+    mainPrompt: string
+    role: { name: string; focus: string; priority?: number; weight?: number; mustReport?: string[] }
+  }): string {
+    const basePrompt = args.mainPrompt
+      .replace(/\n\n\[REVIEW_ORCHESTRATION\][\s\S]*?(?=\n\n\[[A-Z_]+\]|$)/, "")
+      .replace(/\n\n\[REVIEW_SIDECAR\][\s\S]*?(?=\n\n\[[A-Z_]+\]|$)/, "")
+      .replace(/\n\n\[REVIEW_SECTION_ORDER_POLICY\][\s\S]*?(?=\n\n\[[A-Z_]+\]|$)/, "")
+      .replace(/\n\n\[ARTIFACT_PATH\][\s\S]*?(?=\n\n\[[A-Z_]+\]|$)/, "")
+      .replace(/\n\n\[COMPLETION_POLICY\][\s\S]*?(?=\n\n\[[A-Z_]+\]|$)/, "")
+
+    return [
+      "[PHASE] review_reviewer",
+      "[GOAL] Produce a role-specific reviewer summary for the main review consolidation.",
+      "[REVIEWER_ROLE]",
+      `name=${args.role.name}`,
+      `focus=${args.role.focus}`,
+      ...(args.role.mustReport?.length ? [`mustReport=${args.role.mustReport.join(", ")}`] : []),
+      "",
+      "[REVIEWER_POLICY]",
+      "This reviewer run is read-only for project code and test files. Do not modify project files; return reviewer findings only.",
+      DefaultWorkflowEngine.REVIEWER_OUTPUT_POLICY,
+      "Current code and current validation are the source of truth; historical artifacts may inform scope but never substitute for evidence.",
+      "",
+      basePrompt,
+    ].join("\n")
   }
 
   private async dispatchReviewerSessions(args: {
@@ -144,15 +188,6 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       test: "Set ## 状态 and ## 结论 with explicit pass/fail semantics and include regression/coverage evidence.",
     }
 
-    const understandingGuidanceByDepth: Record<UnderstandingDepth, string> = {
-      lightweight:
-        "Focus on extracting core intent and explicit request boundary. Do not trace full dependency chains or perform deep codebase analysis unless ambiguity is detected. Keep analysis scoped to what is directly referenced in the user request. Avoid over-analysis of unrelated modules.",
-      standard:
-        "Trace direct dependencies, parent components, and immediate import chains relevant to the change. Identify impact scope on neighboring modules. Verify changes against existing patterns in the codebase. Document which files were examined and why they are relevant.",
-      deep:
-        "Perform comprehensive dependency tracing including parent components, parent routes, stores, composables, services, helpers, shared modules, API contracts, permission boundaries, and cross-module impacts. Document full call chains, state flow, and data dependencies. Map upstream/downstream effects. Record all traced files and justify each inclusion/exclusion in the analysis scope.",
-    }
-
     const lines = [
       `[PHASE] ${phase}`,
       `[GOAL] ${phaseGoalByType[phase]}`,
@@ -233,6 +268,19 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       }
     }
 
+    const isFirstRefinementDispatch = phase === "spec_refinement" && (runtime?.phaseDispatchAttempts?.spec_refinement ?? 0) === 0
+    const isFirstDirectDevelopDispatch = phase === "develop"
+      && runtime?.startMode === "direct-develop"
+      && (runtime?.phaseDispatchAttempts?.develop ?? 0) === 0
+    if (isFirstRefinementDispatch || isFirstDirectDevelopDispatch) {
+      const artifactFullInitialRequest = workflow ? await readJsonFile<Record<string, { fullInitialRequest?: string }>>(this.deps.workspace.artifactStateFile(workflowId)) : null
+      const fullInitialRequest = artifactFullInitialRequest?.spec_refinement?.fullInitialRequest ?? null
+      if (fullInitialRequest && fullInitialRequest.trim() && fullInitialRequest.trim() !== currentContent.trim()) {
+        lines.push("[FULL_USER_REQUEST_CONTEXT]")
+        lines.push(fullInitialRequest.trim())
+      }
+    }
+
     if (phase === "develop") {
       try {
         const planContent = await readFile(this.deps.workspace.phaseArtifactFile(workflowId, "plan"), "utf8")
@@ -293,9 +341,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       )
     }
 
-    lines.push("[POLICY] Autofill what can be safely inferred. Preserve existing content. Ask humans only for genuine ambiguity. Keep section headings unchanged. Never import or reference icons, images, assets, or components unless you have verified they already exist in the repository. Do not invent import paths, filenames, asset names, or icon exports. Never guess existence from naming habits; verify every named reference and treat unverified outcomes as evidence insufficient, not pass.")
+    lines.push(`[POLICY] ${DefaultWorkflowEngine.CORE_POLICY}`)
     if (phase === "develop" || phase === "review" || phase === "test") {
-      lines.push("[QUALITY_POLICY] Before concluding develop/review/test, identify the repository's available validation commands and quality gates, choose the checks relevant to the actual change scope, and run them when feasible. Record exactly what was executed, what was skipped, and why. Do not claim PASS without sufficient evidence. If a relevant check fails, conclude FAIL or evidence insufficient.")
+      lines.push(`[QUALITY_POLICY] ${DefaultWorkflowEngine.QUALITY_POLICY}`)
     }
     if (phase === "spec_refinement") {
       lines.push("[AI_INTAKE_POLICY] Interpret user natural language directly. Extract requirement intent, infer referenced document locations from user wording, and read project documents with your tools before updating artifact sections. Use [DOC_CANDIDATES] as recall-only hints; make final relevance decisions semantically. Honor [READ_TARGETS] as explicit read instructions when present. For [READ_TARGET_IMAGE_PATH] entries, inspect the image with available tools if supported. If image understanding is unavailable, explicitly record that limitation instead of inventing image content. Do not require user to provide structured JSON.")
@@ -383,7 +431,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
       if (presetDefinition?.runtimePolicy.forceDeepReviewAndTest && (phase === "review" || phase === "test") && effectiveDepth !== "deep") {
         effectiveDepth = "deep"
       }
-      const depthGuidance = understandingGuidanceByDepth[effectiveDepth]
+      const depthGuidance = DefaultWorkflowEngine.UNDERSTANDING_GUIDANCE_BY_DEPTH[effectiveDepth]
       const activeRiskSignals = this.deps.resolvedConfig.riskSignals ?? []
       lines.push("[UNDERSTANDING_POLICY]")
       lines.push(`Effective depth: ${effectiveDepth}`)
@@ -662,12 +710,12 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           const reviewRoles = configuredReviewOrchestration?.reviewRoles?.length
             ? configuredReviewOrchestration.reviewRoles
             : presetDefinition?.runtimePolicy.reviewRoles
+          const summaryRules = configuredReviewOrchestration?.summaryRules ?? presetDefinition?.runtimePolicy.summaryRules ?? null
           const mergeMode = configuredReviewOrchestration?.mergePolicy?.conflictResolution ?? "prefer_conservative"
-
-          if (reviewRoles?.length) {
-            const reviewerSessions: ReviewSidecarEntry[] = []
-            for (const role of reviewRoles) {
-              const reviewerSessionId = await this.deps.sessionCoordinator.createSession(
+        if (reviewRoles?.length) {
+          const reviewerSessions: ReviewSidecarEntry[] = []
+          for (const role of reviewRoles) {
+            const reviewerSessionId = await this.deps.sessionCoordinator.createSession(
                 workflowId,
                 "review",
                 `${workflowId}:review:${role.name}`,
@@ -676,18 +724,17 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
                   roleName: role.name,
                 },
               )
-              const rolePrompt = [
-                "[REVIEWER_ROLE]",
-                `name=${role.name}`,
-                `focus=${role.focus}`,
-                ...(role.mustReport?.length ? [`mustReport=${role.mustReport.join(", ")}`] : []),
-                "",
-                prompt,
-              ].join("\n")
+              const rolePrompt = await this.buildReviewerPrompt({
+                mainPrompt: prompt,
+                role,
+              })
+              const rolePromptStorage = buildPromptStorageSummary(rolePrompt)
               reviewerSessions.push({
                 reviewerSessionId,
                 roleName: role.name,
-                prompt: rolePrompt,
+                prompt: rolePromptStorage.summary,
+                promptHash: rolePromptStorage.hash,
+                promptLength: rolePromptStorage.length,
                 status: "pending",
                 startedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
@@ -714,6 +761,7 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           }
         }
         await this.deps.stateStore.updateRuntime(workflowId, runtimePatch)
+        const promptStorage = buildPromptStorageSummary(prompt)
         await this.deps.eventStore.append({
           workflowId,
           type: "session.dispatched",
@@ -721,7 +769,9 @@ export class DefaultWorkflowEngine implements WorkflowEngine {
           payload: {
             sessionId,
             phase: action.phase,
-            reason: prompt,
+            reason: promptStorage.summary,
+            reasonHash: promptStorage.hash,
+            reasonLength: promptStorage.length,
           },
         })
         return

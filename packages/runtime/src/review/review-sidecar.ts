@@ -2,6 +2,8 @@ export type ReviewSidecarEntry = {
   reviewerSessionId: string
   roleName: string
   prompt: string
+  promptHash?: string
+  promptLength?: number
   status: "pending" | "running" | "idle" | "failed" | "completed"
   startedAt: string
   updatedAt: string
@@ -10,6 +12,7 @@ export type ReviewSidecarEntry = {
   issueConfidence?: "high" | "medium" | "low" | null
   issueSource?: string | null
   lastError?: string
+  lastSummaryHash?: string | null
 }
 
 export type ReviewSidecarFile = {
