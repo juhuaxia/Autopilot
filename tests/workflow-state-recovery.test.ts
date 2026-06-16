@@ -96,6 +96,22 @@ describe("workflow state recovery", () => {
         return rest
       })
       await writeFile(sidecarFile, `${JSON.stringify(sidecar, null, 2)}\n`, "utf8")
+      await writeFile(
+        harness.workspace.phaseArtifactFile(nodeWorkflowId!, "review"),
+        [
+          "# 审查报告",
+          "",
+          "## 状态",
+          "待判定",
+          "",
+          "## 结论",
+          "待判定",
+          "",
+          "## 报告语言",
+          "中文",
+        ].join("\n"),
+        "utf8",
+      )
 
       const reloadedPlugin = await workflowPlugin({ directory: workspaceDir })
       const attachOutput = await reloadedPlugin.tool.workflow_attach.execute({ workflowId: nodeWorkflowId! })

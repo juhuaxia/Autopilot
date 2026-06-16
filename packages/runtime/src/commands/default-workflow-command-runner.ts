@@ -1274,7 +1274,9 @@ export class DefaultWorkflowCommandRunner implements WorkflowCommandRunner {
           const targetId = await harness.stateStore.getWorkflow(workflowId)
             ? resolvePresetWorkflowTargetId(workflowId)
             : generateDerivedWorkflowId(workflowId, "new")
-          const requests = resolveClarificationRequests(pending)
+          const requests = pending
+            ? resolveClarificationRequests(pending)
+            : { userRequest: originalPrompt ?? "", fullUserRequest: originalPrompt ?? "" }
           await initializeWorkflow({
             workflowId: targetId,
             stateStore: harness.stateStore,
