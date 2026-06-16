@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.7] - 2026-06-15
+
+### Fixed
+
+- Fixed a `workflow_answer` clarification fallback branch so creating a new workflow after clarification no longer fails TypeScript publish checks when clarification state is absent.
+- Fixed the legacy review sidecar recovery coverage to materialize a minimal `review.md` artifact before attach-time synchronization, keeping the recovery regression suite publish-safe.
+
+### Verification
+
+- `bun test tests/workflow-state-recovery.test.ts tests/workflow-command-runner.test.ts tests/workflow-engine.test.ts`
+- `bun run typecheck`
+- `bun run build`
+
 ## [0.3.6] - 2026-06-15
 
 ### Changed
